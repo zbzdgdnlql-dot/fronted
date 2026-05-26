@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { login } from '../api/endpoints'
+import { getInstitutes, getStudentBasicInformation, login, searchInstitutes, type InstituteItem } from '../api/endpoints'
 import { useAuth } from '../stores/auth'
 import { useToast } from '../composables/useToast'
 import { useAsync } from '../composables/useAsync'
@@ -15,14 +15,104 @@ const req = useAsync<void>()
 const institute = ref('')
 const username = ref('')
 const password = ref('')
+const userType = ref<'Student' | 'Teacher'>('Student')
+const selectedInstituteId = ref('')
+const instituteOptions = ref<InstituteItem[]>([])
+const instituteLoading = ref(false)
+const instituteLoadError = ref<string | null>(null)
+const instituteFieldError = ref<string | null>(null)
+const instituteMenuOpen = ref(false)
+let instituteSearchTimer: ReturnType<typeof window.setTimeout> | undefined
+let instituteRequestId = 0
+
+const trimmedInstitute = computed(() => institute.value.trim())
+
+const loadInstitutes = async (keyword = '') => {
+  const requestId = ++instituteRequestId
+  instituteLoading.value = true
+  instituteLoadError.value = null
+  try {
+    const res = keyword ? await searchInstitutes(keyword) : await getInstitutes()
+    if (requestId !== instituteRequestId) return
+    instituteOptions.value = res.data.items ?? []
+  } catch {
+    if (requestId !== instituteRequestId) return
+    instituteOptions.value = []
+    instituteLoadError.value = '学校列表加载失败，请稍后重试'
+  } finally {
+    if (requestId === instituteRequestId) instituteLoading.value = false
+  }
+}
+
+const openInstituteMenu = () => {
+  instituteMenuOpen.value = true
+  if (!instituteOptions.value.length) void loadInstitutes(trimmedInstitute.value)
+}
+
+const closeInstituteMenu = () => {
+  window.setTimeout(() => {
+    instituteMenuOpen.value = false
+  }, 120)
+}
+
+const selectInstitute = (item: InstituteItem) => {
+  selectedInstituteId.value = item.school_id
+  institute.value = item.school_name
+  instituteMenuOpen.value = false
+}
+
+watch(institute, (value) => {
+  instituteFieldError.value = null
+
+  if (selectedInstituteId.value) {
+    const selected = instituteOptions.value.find((item) => item.school_id === selectedInstituteId.value)
+    if (selected?.school_name !== value) selectedInstituteId.value = ''
+  }
+
+  if (instituteSearchTimer) window.clearTimeout(instituteSearchTimer)
+  instituteSearchTimer = window.setTimeout(() => {
+    if (!instituteMenuOpen.value) return
+    void loadInstitutes(value.trim())
+  }, 250)
+})
+
+onMounted(() => {
+  void loadInstitutes()
+})
 
 const submit = async () => {
+  if (!trimmedInstitute.value) {
+    instituteFieldError.value = '请先选择学校'
+    return
+  }
+
   await req.run(async () => {
-    const session = await login({
-      institute: institute.value.trim(),
-      username: username.value.trim(),
+    const res = await login({
+      institute: trimmedInstitute.value,
+      user_type: userType.value,
+      stu_id: username.value.trim(),
       password: password.value,
     })
+    localStorage.setItem('token', res.access_token)
+    const session = {
+      user_id: res.user.user_id,
+      user_type: res.user.user_type.toLowerCase(),
+    }
+    if (session.user_type === 'student') {
+      const basic = await getStudentBasicInformation()
+      const classContexts = basic.info.map((item) => ({
+        class_id: item.class_id,
+        class_name: item.class_name,
+        teacher_name: Array.isArray(item.teacher_name) ? item.teacher_name.join('、') : item.teacher_name,
+      }))
+      const firstClass = classContexts[0]
+      if (firstClass) {
+        Object.assign(session, {
+          class_context: firstClass,
+          class_contexts: classContexts,
+        })
+      }
+    }
     auth.setSession(session)
     toast.push('登录成功', 'success')
     const redirect = (route.query.redirect as string | undefined) ?? '/'
@@ -44,15 +134,69 @@ const submit = async () => {
       </div>
 
       <form class="flex flex-col gap-4" @submit.prevent="submit">
-        <label class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-2">
-          <span class="text-xs font-black text-gray-400 uppercase tracking-widest">机构</span>
-          <input
-            v-model="institute"
-            class="bg-transparent outline-none text-sm font-bold text-gray-800 placeholder:text-gray-400"
-            placeholder="例如：xx中学"
-            autocomplete="organization"
-          />
-        </label>
+        <div class="relative">
+          <label
+            class="bg-[#F8F9FA] border rounded-2xl p-4 flex flex-col gap-2"
+            :class="instituteFieldError ? 'border-red-200' : 'border-gray-100'"
+          >
+            <span class="text-xs font-black text-gray-400 uppercase tracking-widest">学校</span>
+            <input
+              v-model="institute"
+              class="bg-transparent outline-none text-sm font-bold text-gray-800 placeholder:text-gray-400"
+              placeholder="输入学校名称搜索"
+              autocomplete="organization"
+              @focus="openInstituteMenu"
+              @blur="closeInstituteMenu"
+            />
+          </label>
+          <p v-if="instituteFieldError" class="mt-2 px-1 text-xs font-bold text-red-600">{{ instituteFieldError }}</p>
+
+          <div
+            v-if="instituteMenuOpen"
+            class="absolute z-20 mt-2 max-h-64 w-full overflow-auto rounded-2xl border border-gray-100 bg-white shadow-lg"
+          >
+            <div v-if="instituteLoading" class="px-4 py-3 text-sm font-bold text-gray-400">学校加载中...</div>
+            <div v-else-if="instituteLoadError" class="px-4 py-3 text-sm font-bold text-red-600">
+              {{ instituteLoadError }}
+            </div>
+            <button
+              v-for="item in instituteOptions"
+              v-else
+              :key="item.school_id"
+              type="button"
+              class="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-bold text-gray-700 hover:bg-[#F8F9FA]"
+              @mousedown.prevent="selectInstitute(item)"
+            >
+              <span>{{ item.school_name }}</span>
+              <span v-if="selectedInstituteId === item.school_id" class="text-xs font-black text-[#70C125]">已选</span>
+            </button>
+            <div
+              v-if="!instituteLoading && !instituteLoadError && instituteOptions.length === 0"
+              class="px-4 py-3 text-sm font-bold text-gray-400"
+            >
+              未找到相关学校
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            class="rounded-2xl border-2 px-4 py-3 text-sm font-black transition-all"
+            :class="userType === 'Student' ? 'border-[#70C125] bg-[#F4FAEE] text-[#70C125]' : 'border-gray-100 bg-white text-gray-400 hover:text-gray-600'"
+            @click="userType = 'Student'"
+          >
+            学生
+          </button>
+          <button
+            type="button"
+            class="rounded-2xl border-2 px-4 py-3 text-sm font-black transition-all"
+            :class="userType === 'Teacher' ? 'border-[#70C125] bg-[#F4FAEE] text-[#70C125]' : 'border-gray-100 bg-white text-gray-400 hover:text-gray-600'"
+            @click="userType = 'Teacher'"
+          >
+            教师
+          </button>
+        </div>
 
         <label class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-2">
           <span class="text-xs font-black text-gray-400 uppercase tracking-widest">账号</span>
@@ -86,4 +230,3 @@ const submit = async () => {
     </div>
   </main>
 </template>
-

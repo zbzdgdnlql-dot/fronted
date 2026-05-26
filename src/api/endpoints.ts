@@ -1,151 +1,439 @@
 import { request } from './http'
-import type { Session } from '../stores/auth'
 
 export type LoginForm = {
   institute: string
-  username: string
+  user_type: 'Student' | 'Teacher'
+  stu_id: string
   password: string
 }
 
+export type LoginResponse = {
+  access_token: string
+  token_type: string
+  user: {
+    user_id: string
+    user_type: string
+  }
+}
+
 export async function login(form: LoginForm) {
-  return request<Session>('auth/login', { method: 'POST', body: form })
+  return request<LoginResponse>('auth/login', { method: 'POST', body: form })
 }
 
 export async function logout() {
-  return request<unknown>('auth/logout', { method: 'GET' })
+  return request<unknown>('auth/logout', { method: 'POST' })
 }
 
-export type StudentCustomContentItem = {
-  content_id: string
+export type InstituteItem = {
+  school_id: string
+  school_name: string
+}
+
+export type InstituteListData = {
+  page?: number
+  per_page?: number
+  total?: number
+  cnt?: number
+  items: InstituteItem[]
+}
+
+export type InstituteResponse = {
+  ok: boolean
+  data: InstituteListData
+}
+
+export async function getInstitutes() {
+  return request<InstituteResponse>('auth/institute/all', { method: 'GET' })
+}
+
+export async function searchInstitutes(keyWord: string) {
+  return request<InstituteResponse>('auth/institute/search', {
+    method: 'GET',
+    query: { key_word: keyWord },
+  })
+}
+
+export type StudentClassContext = {
   class_id: string
+  class_name: string
+  teacher_name: string | string[]
+}
+
+export type StudentBasicInformationResponse = {
+  class_cnt: number
+  info: StudentClassContext[]
+}
+
+export async function getStudentBasicInformation() {
+  return request<StudentBasicInformationResponse>('student/basic_information', { method: 'GET' })
+}
+
+export type StudentTaskItem = {
+  task_id: string
+  class_id: string
+  task_type: 'practice' | 'homework'
   title: string
   segmented_sentences: string[]
   max_submission: number
-  target_phonemes: string[]
+  target_phonemes: string[] | string | null
   created_at: string
   updated_at: string
   avg_score: number
   is_active: boolean
 }
 
-export async function getStudentCustomContents() {
-  return request<{ class_content: StudentCustomContentItem[] }>('student/custom_content', { method: 'GET' })
+export async function getStudentTasks(classId?: string | null) {
+  return request<{ ok: boolean; data: StudentTaskItem[] }>('student/tasks', {
+    method: 'GET',
+    query: { class_id: classId },
+  })
 }
 
-export type StudentContentRecordItem = {
+export type StudentTaskDetail = {
+  task_id: number
+  course: Array<{
+    class_id: string
+    class_name: string
+  }>
+  task_type: 'practice' | 'homework'
+  language_type: 'jp' | 'de' | 'fr' | 'sp' | 'ru' | string
+  title: string
+  segments: string[]
+  notes: string | null
+  max_attempt: number | null
+  target_phoneme: string[] | string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  available_from: string | null
+  available_until: string | null
+}
+
+export async function getStudentTaskDetail(taskId: string | number) {
+  return request<{ ok: boolean; data: StudentTaskDetail }>('student/task_detail', {
+    method: 'GET',
+    query: { task_id: taskId },
+  })
+}
+
+export type StudentTaskRecordItem = {
   session_id: string
   title: string
   average_score: number
   teacher_score: number
-  teacher_notes: number
+  teacher_notes: string
   completed_at: string
   created_at: string
 }
 
-export async function getStudentCustomContentRecords(contentId: string) {
-  return request<{ class_content: StudentContentRecordItem[] }>(`student/custom_content/${encodeURIComponent(contentId)}`, {
+export async function getStudentTaskRecords(taskId: string | number) {
+  return request<{ tasks: StudentTaskRecordItem[] }>('student/task', {
     method: 'GET',
+    query: { task_id: taskId },
   })
 }
 
-export type TeacherDashboardResponse = {
-  user: unknown
-  class_details: Array<{
-    class: unknown
-    student_count: number
-    content_count: number
-  }>
-  total_classes: number
-  total_students: number
-  total_content: number
+export type StudentSessionEvaluationItem = {
+  eval_id: string
+  line_number: number
+  sentence_text: string
+  pronunciation: number
+  rhythm: number
+  fluency: number
+  completeness: number
+  total_score: number
+  teacher_notes: string
+  created_at: string
 }
 
-export async function getTeacherDashboard() {
-  return request<TeacherDashboardResponse>('teacher/dashboard', { method: 'GET' })
+export async function getStudentSessionDetails(sessionId: string) {
+  return request<{ success: boolean; details: StudentSessionEvaluationItem[] }>('student/session', {
+    method: 'GET',
+    query: { session_id: sessionId },
+  })
+}
+
+export type StudentArchiveStatistics = {
+  total_entries: number
+  main_page_entries: number
+  aufgaben_entries: number
+  average_score: number
+  max_score: number
+  latest_activity: string | null
+}
+
+export async function getStudentArchiveStatistics() {
+  return request<{ success: boolean; statistics: StudentArchiveStatistics }>('student/archive/statistics', { method: 'GET' })
+}
+
+export async function getStudentHistoryWords() {
+  return request<{ success: boolean; words: string[] }>('student/history/words', { method: 'GET' })
+}
+
+export type UserDetailClass = {
+  class_id: string
+  class_name: string
+  grade_level: string
+}
+
+export type UserDetail = {
+  user_id: number
+  user_type: 'student' | 'teacher' | 'admin' | 'root' | string
+  username: string
+  school: {
+    school_id: string
+    school_name: string
+  } | null
+  is_active: boolean | null
+  gender: boolean | null
+  email: string | null
+  phone: string | null
+  avatar_url: string | null
+  created_at: string | null
+  updated_at: string | null
+  stu_id: string | null
+  staff_id: string | null
+  language: string | null
+  classes: UserDetailClass[]
+  is_root: boolean | null
+}
+
+export async function getUserDetail() {
+  return request<{ ok: boolean; data: UserDetail }>('auth/users/user_detail', { method: 'GET' })
+}
+
+export type CreateStudentTestSessionResponse = {
+  ok: boolean
+  session_id: string
+}
+
+export async function createStudentTestSession(taskId: string | number) {
+  return request<CreateStudentTestSessionResponse>('student/test/create_session', {
+    method: 'POST',
+    body: { task_id: Number(taskId) },
+  })
+}
+
+export type SubmitStudentTestSessionResponse = {
+  ok: boolean
+  session_id: string
+  total_score: number
+  evaluation_count: number
+  average_score: number
+}
+
+export async function submitStudentTestSession(taskId: string | number) {
+  return request<SubmitStudentTestSessionResponse>('student/test/submit_session', {
+    method: 'POST',
+    body: { task_id: Number(taskId) },
+  })
+}
+
+export type StudentPronTestAnalyzeParams = {
+  audio: File | Blob
+  refText: string
+  taskId: string | number
+  sentenceSeq?: number
+  lang?: string
+  core?: string
+}
+
+export async function analyzeStudentPronTest(params: StudentPronTestAnalyzeParams) {
+  const fd = new FormData()
+  fd.set('audio', params.audio)
+  fd.set('ref_text', params.refText)
+  fd.set('task_id', String(params.taskId))
+  fd.set('sentence_seq', String(params.sentenceSeq ?? 0))
+  fd.set('lang', params.lang ?? 'fr')
+  fd.set('core', params.core ?? 'sent')
+  return request<{
+    ok: boolean
+    lang: string
+    core: string
+    evaluation_id: string
+    audio_file_id: string
+    session_id: string
+    task_id: number
+    sentence_seq: number
+    ref_text: string
+    result_score: unknown
+  }>('student/pron-test/analyze', { method: 'POST', body: fd, timeoutMs: 60_000 })
+}
+
+export type TeacherBasicInformation = {
+  total_classes: number
+  total_students: number
+  total_tasks: number
+}
+
+export async function getTeacherBasicInformation() {
+  return request<TeacherBasicInformation>('teacher/basic_information', { method: 'GET' })
 }
 
 export type TeacherClassItem = {
   class_id: string
   class_name: string
-  description: string
+  description: string | null
   student_count: number
-  content_count: number
-  created_at: string
+  task_count: number
+  grade_level: string
 }
 
 export async function getTeacherClasses() {
-  return request<{ success: boolean; classes: TeacherClassItem[]; total_count: number }>('teacher//api/classes', { method: 'GET' })
+  return request<TeacherClassItem[]>('teacher/classes', { method: 'GET' })
 }
 
-export type TeacherContentItem = {
-  content_id: string
-  title?: string
-  created_at?: string
-  updated_at?: string
-  max_submission?: number
-  is_active?: boolean
+export type TeacherTaskItem = {
+  task_id: number
+  course: Array<{ class_id: string; class_name: string }>
+  task_type: 'practice' | 'homework'
+  title: string
+  segments: string[]
+  notes: string | null
+  max_attempt: number | null
+  target_phoneme: string[] | null
+  available_from: string | null
+  available_until: string | null
 }
 
-export async function getTeacherClassContents(classId: string) {
-  return request<{ class_obj: unknown; content_list: TeacherContentItem[] }>(
-    `teacher/class/${encodeURIComponent(classId)}/content`,
-    { method: 'GET' },
-  )
+export async function getTeacherTasks() {
+  return request<TeacherTaskItem[]>('teacher/tasks', { method: 'GET' })
 }
 
-export async function validateTeacherContent(contentText: string) {
-  return request<{
-    valid: boolean
-    has_german_chars: boolean
-    word_count: number
-    sentence_count: number
-    character_count: number
-    message: string
-  }>('teacher/api/content/validate', { method: 'POST', body: { content_text: contentText } })
-}
-
-export async function segmentTeacherContent(contentText: string) {
-  return request<{
-    success: boolean
-    sentences: string[]
-    sentence_count: number
-    statistics: Record<string, number>
-    estimated_difficulty: number
-    suggested_phonemes: string[]
-    has_german_chars: boolean
-  }>('teacher/api/content/segment', { method: 'POST', body: { content_text: contentText } })
-}
-
-export type TeacherContentRecordsStudent = {
-  user_id: string
-  username: string
-  records_count: number
-  records: Array<{
-    session_id: string
-    average_score: number
-    completed_at: string
+export type TeacherClassTaskSummary = {
+  task_id: number
+  title: string
+  finished_students_count: number
+  unfinished_students: Array<{
+    user_id: number
+    username: string
+    stu_id?: string
   }>
 }
 
-export async function getTeacherCustomContentRecords(contentId: string) {
-  return request<TeacherContentRecordsStudent[]>(
-    `teacher/custom_content/${encodeURIComponent(contentId)}/custom_content_detail`,
-    { method: 'GET' },
-  )
+export async function getTeacherClassTasks(classId: string) {
+  return request<TeacherClassTaskSummary[]>('teacher/class/tasks', {
+    method: 'POST',
+    body: { class_id: classId },
+  })
+}
+
+export type SegmentTeacherContentResponse = {
+  segments: string[]
+}
+
+export async function segmentTeacherContent(contentText: string) {
+  return request<SegmentTeacherContentResponse>('teacher/task/auto_segment', {
+    method: 'POST',
+    query: { text: contentText },
+  })
 }
 
 export async function createTeacherContent(params: {
   classId: string
   title: string
   contentText: string
+  taskType?: 'practice' | 'homework'
   maxSubmission?: number
   targetPhonemes?: string[]
+  availableUntil?: string | null
 }) {
-  const fd = new FormData()
-  fd.set('title', params.title)
-  fd.set('content_text', params.contentText)
-  if (params.maxSubmission !== undefined) fd.set('max_submission', String(params.maxSubmission))
-  if (params.targetPhonemes?.length) fd.set('target_phonemes', JSON.stringify(params.targetPhonemes))
-  return request<unknown>(`teacher/class/${encodeURIComponent(params.classId)}/content`, { method: 'POST', body: fd })
+  const segmented = await segmentTeacherContent(params.contentText)
+  return request<{ success: boolean }>('teacher/task/save', {
+    method: 'POST',
+    body: {
+      course: [params.classId],
+      task_type: params.taskType ?? 'homework',
+      title: params.title,
+      segments: segmented.segments.length ? segmented.segments : [params.contentText],
+      max_attempt: params.maxSubmission,
+      target_phoneme: params.targetPhonemes?.length ? params.targetPhonemes : null,
+      available_until: params.availableUntil ?? null,
+    },
+  })
 }
 
+export async function deleteTeacherTask(taskId: string | number) {
+  return request<{ success: boolean }>('teacher/task/delete', {
+    method: 'POST',
+    query: { task_id: taskId },
+  })
+}
+
+export type TeacherTaskRecordStudent = {
+  user_id: number
+  username: string
+  records_count: number
+  records: Array<{
+    session_id: string
+    average_score: number | null
+    completed_at: string | null
+  }>
+}
+
+export async function getTeacherTaskRecords(classId: string, taskId: string | number) {
+  return request<TeacherTaskRecordStudent[]>('teacher/task/records', {
+    method: 'POST',
+    body: { class_id: classId, task_id: Number(taskId) },
+  })
+}
+
+export async function getTeacherSessionDetails(userId: string | number, sessionId: string) {
+  return request<StudentSessionEvaluationItem[]>('teacher/get_session', {
+    method: 'POST',
+    query: { user_id: userId, session_id: sessionId },
+  })
+}
+
+export async function saveTeacherComments(comment: Record<string, { comment: string; evaluations: Record<string, string> }>) {
+  return request<{ success: boolean }>('teacher/comment', {
+    method: 'POST',
+    body: { comment },
+  })
+}
+
+export type TeacherDashboardResponse = TeacherBasicInformation & {
+  class_details: Array<{
+    class: TeacherClassItem
+    student_count: number
+    content_count: number
+  }>
+  total_content: number
+}
+
+export async function getTeacherDashboard(): Promise<TeacherDashboardResponse> {
+  const [basic, classes] = await Promise.all([getTeacherBasicInformation(), getTeacherClasses()])
+  return {
+    ...basic,
+    total_content: basic.total_tasks,
+    class_details: classes.map((item) => ({
+      class: item,
+      student_count: item.student_count,
+      content_count: item.task_count,
+    })),
+  }
+}
+
+export type TeacherContentItem = TeacherTaskItem
+export type TeacherContentRecordsStudent = TeacherTaskRecordStudent
+
+export async function getTeacherClassContents(classId: string) {
+  const tasks = await getTeacherTasks()
+  return tasks.filter((task) => task.course.some((course) => course.class_id === classId))
+}
+
+export async function validateTeacherContent(contentText: string) {
+  const trimmed = contentText.trim()
+  return {
+    valid: !!trimmed,
+    has_german_chars: false,
+    word_count: trimmed ? trimmed.split(/\s+/).length : 0,
+    sentence_count: trimmed ? trimmed.split(/[.!?。！？]+/).filter(Boolean).length : 0,
+    character_count: trimmed.length,
+    message: trimmed ? 'ok' : '内容不能为空',
+  }
+}
+
+export async function getTeacherCustomContentRecords(taskId: string | number, classId: string) {
+  return getTeacherTaskRecords(classId, taskId)
+}

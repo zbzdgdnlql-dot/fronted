@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useAuth } from '../stores/auth'
 import { logout as apiLogout } from '../api/endpoints'
 import { useToast } from '../composables/useToast'
@@ -9,6 +9,7 @@ import router from '../router'
 const route = useRoute()
 const auth = useAuth()
 const toast = useToast()
+const classMenuOpen = ref(false)
 
 const studentLinks = [
   { name: '主页', path: '/' },
@@ -26,6 +27,7 @@ const teacherLinks = [
 ] as const
 
 const navLinks = computed(() => (auth.userType.value === 'teacher' ? teacherLinks : studentLinks))
+const showClassSwitcher = computed(() => auth.userType.value === 'student' && auth.classContexts.value.length > 0)
 
 const isActive = (path: string) => {
   if (path.startsWith('/teacher')) return route.path.startsWith('/teacher')
@@ -40,6 +42,27 @@ const onLogout = async () => {
   toast.push('已退出登录', 'success')
   router.push('/login')
 }
+
+const toggleClassMenu = () => {
+  if (!showClassSwitcher.value) return
+  classMenuOpen.value = !classMenuOpen.value
+}
+
+const selectClass = (classId: string) => {
+  auth.setCurrentClass(classId)
+  classMenuOpen.value = false
+  toast.push('已切换班级', 'success')
+}
+
+const closeClassMenu = (event: MouseEvent) => {
+  const target = event.target as HTMLElement
+  if (!target.closest('[data-class-switcher]')) classMenuOpen.value = false
+}
+
+document.addEventListener('click', closeClassMenu)
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeClassMenu)
+})
 </script>
 
 <template>
@@ -69,8 +92,32 @@ const onLogout = async () => {
 
     <!-- Right Area: Class Label & User Avatar -->
     <div class="flex items-center gap-4">
-      <div v-if="auth.className.value" class="hidden lg:flex items-center border-2 border-[#70C125] px-4 py-1.5 rounded-xl">
-        <span class="text-sm font-black text-[#70C125] tracking-wide">{{ auth.className.value }}</span>
+      <div v-if="showClassSwitcher" data-class-switcher class="relative hidden lg:block">
+        <button
+          type="button"
+          class="flex items-center gap-2 border-2 border-[#70C125] px-4 py-1.5 rounded-xl bg-white hover:bg-[#F4FAEE] transition-colors"
+          @click.stop="toggleClassMenu"
+        >
+          <span class="max-w-40 truncate text-sm font-black text-[#70C125] tracking-wide">{{ auth.className.value }}</span>
+          <span class="text-xs font-black text-[#70C125]">{{ classMenuOpen ? '▲' : '▼' }}</span>
+        </button>
+
+        <div
+          v-if="classMenuOpen"
+          class="absolute right-0 top-[calc(100%+8px)] z-30 w-72 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-lg"
+        >
+          <button
+            v-for="item in auth.classContexts.value"
+            :key="item.class_id"
+            type="button"
+            class="flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-[#F8F9FA]"
+            :class="item.class_id === auth.session.value?.class_context?.class_id ? 'bg-[#F4FAEE]' : 'bg-white'"
+            @click="selectClass(item.class_id)"
+          >
+            <span class="text-sm font-black text-gray-900">{{ item.class_name }}</span>
+            <span v-if="item.teacher_name" class="text-xs font-bold text-gray-400">教师：{{ item.teacher_name }}</span>
+          </button>
+        </div>
       </div>
 
       <button

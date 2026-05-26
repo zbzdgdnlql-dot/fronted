@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ChevronLeft, Filter, Search, ChevronRight } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
-import { getTeacherCustomContentRecords, type TeacherContentRecordsStudent } from '../../api/endpoints'
+import { getTeacherTaskRecords, type TeacherTaskRecordStudent } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
 import ErrorState from '../../components/ErrorState.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
@@ -26,13 +26,13 @@ const meta = computed(() => {
   const contentId = (route.query.contentId as string | undefined) ?? ''
   return {
     classLabel: (route.query.classId as string | undefined) ?? '--',
-    contentId,
+    taskId: (route.query.taskId as string | undefined) ?? contentId,
   }
 })
 
 const keyword = ref('')
 
-const req = useAsync<TeacherContentRecordsStudent[]>()
+const req = useAsync<TeacherTaskRecordStudent[]>()
 
 const submissions = computed<SubmissionItem[]>(() => {
   const list = req.data.value ?? []
@@ -40,7 +40,7 @@ const submissions = computed<SubmissionItem[]>(() => {
   list.forEach((s) => {
     s.records.forEach((r, idx) => {
       rows.push({
-        studentId: s.user_id,
+        studentId: String(s.user_id),
         studentName: s.username,
         attempt: idx + 1,
         status: '已提交',
@@ -62,13 +62,19 @@ const filtered = computed(() => {
 const openGrading = (item: SubmissionItem) => {
   router.push({
     path: '/teacher/grading',
-    query: { student: item.studentName, contentId: meta.value.contentId, sessionId: item.sessionId },
+    query: {
+      student: item.studentName,
+      userId: item.studentId,
+      classId: meta.value.classLabel,
+      taskId: meta.value.taskId,
+      sessionId: item.sessionId,
+    },
   })
 }
 
 const load = async () => {
-  if (!meta.value.contentId) return
-  await req.run(async () => getTeacherCustomContentRecords(meta.value.contentId))
+  if (!meta.value.taskId || !meta.value.classLabel || meta.value.classLabel === '--') return
+  await req.run(async () => getTeacherTaskRecords(meta.value.classLabel, meta.value.taskId))
 }
 
 onMounted(load)
@@ -85,7 +91,7 @@ onMounted(load)
               班级: {{ meta.classLabel }}
             </div>
             <div class="bg-white border border-gray-100 rounded-full px-4 py-2 text-sm font-black text-gray-600">
-              内容 ID: {{ meta.contentId }}
+              任务 ID: {{ meta.taskId }}
             </div>
           </div>
         </div>

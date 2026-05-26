@@ -53,7 +53,7 @@ onMounted(load)
           <div class="text-xs font-black text-gray-400 uppercase tracking-widest">作业数</div>
           <div class="text-3xl font-black text-gray-900 mt-2">
             <SkeletonBlock v-if="req.loading.value" class="h-9 w-20" />
-            <span v-else>{{ stats?.total_content ?? 0 }}</span>
+            <span v-else>{{ stats?.total_tasks ?? 0 }}</span>
           </div>
         </div>
       </div>
@@ -76,11 +76,10 @@ onMounted(load)
             :key="idx"
             class="bg-[#F8F9FA] border border-gray-100 rounded-3xl p-6 flex flex-col gap-2"
           >
-            <div class="text-sm font-black text-gray-900">班级</div>
+            <div class="text-sm font-black text-gray-900">{{ c.class.class_name }}</div>
             <div class="text-sm font-bold text-gray-500">学生数 {{ c.student_count }} · 作业数 {{ c.content_count }}</div>
           </div>
         </div>
-        <!-- TODO: 将 class_details 中的 class 字段映射为可展示的 class_name、grade 等信息（后端返回为 SQLAlchemy 对象序列化结果）。 -->
       </section>
     </template>
   </main>

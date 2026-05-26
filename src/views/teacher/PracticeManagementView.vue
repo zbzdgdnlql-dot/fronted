@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ChevronLeft, Plus, Search, Filter, ChevronRight } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
-import { getTeacherClassContents, getTeacherClasses, type TeacherClassItem, type TeacherContentItem } from '../../api/endpoints'
+import { getTeacherClassContents, getTeacherClasses, type TeacherClassItem, type TeacherTaskItem } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
 import ErrorState from '../../components/ErrorState.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
@@ -19,8 +19,8 @@ type PracticeItem = {
 
 const router = useRouter()
 
-const classesReq = useAsync<{ success: boolean; classes: TeacherClassItem[]; total_count: number }>()
-const contentsReq = useAsync<{ class_obj: unknown; content_list: TeacherContentItem[] }>()
+const classesReq = useAsync<TeacherClassItem[]>()
+const contentsReq = useAsync<TeacherTaskItem[]>()
 
 const selectedClassId = ref<string | null>(null)
 
@@ -29,16 +29,16 @@ const filters = ref({
   type: '所有类型' as '所有类型' | PracticeType,
 })
 
-const classes = computed(() => classesReq.data.value?.classes ?? [])
+const classes = computed(() => classesReq.data.value ?? [])
 
 const practices = computed<PracticeItem[]>(() => {
-  const list = contentsReq.data.value?.content_list ?? []
+  const list = contentsReq.data.value ?? []
   return list.map((c) => ({
-    id: c.content_id,
-    title: c.title ?? `内容 ${c.content_id}`,
-    type: '综合作业',
-    attemptsLimit: c.max_submission,
-    createdAt: c.created_at ?? '--',
+    id: String(c.task_id),
+    title: c.title ?? `任务 ${c.task_id}`,
+    type: c.task_type === 'practice' ? '句子练习' : '综合作业',
+    attemptsLimit: c.max_attempt ?? undefined,
+    createdAt: c.available_from ?? '--',
   }))
 })
 
@@ -72,7 +72,7 @@ const openCreate = () => {
 }
 
 const openSubmissions = (practiceId: string) => {
-  router.push({ path: '/teacher/submissions', query: { contentId: practiceId, classId: selectedClassId.value ?? undefined } })
+  router.push({ path: '/teacher/submissions', query: { taskId: practiceId, classId: selectedClassId.value ?? undefined } })
 }
 </script>
 
@@ -159,7 +159,6 @@ const openSubmissions = (practiceId: string) => {
           </select>
         </label>
       </div>
-      <!-- TODO: 若后端区分内容类型（句子/单词/综合），将 TeacherContentItem 映射为 PracticeType 并补齐筛选选项。 -->
     </section>
 
     <ErrorState
@@ -191,7 +190,7 @@ const openSubmissions = (practiceId: string) => {
           <div class="flex items-start justify-between gap-3">
             <div class="flex flex-col gap-1">
               <h4 class="text-lg font-extrabold text-gray-900">{{ practice.title }}</h4>
-              <div class="text-sm font-bold text-gray-400">'ID: {{ practice.id }}'</div>
+              <div class="text-sm font-bold text-gray-400">ID: {{ practice.id }}</div>
             </div>
             <div class="px-3 py-1.5 rounded-full bg-white border border-gray-100 text-xs font-black text-gray-500">
               {{ practice.type }}

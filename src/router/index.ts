@@ -32,6 +32,11 @@ const router = createRouter({
       component: () => import('../views/TaskView.vue'),
     },
     {
+      path: '/tasks/:taskId/test',
+      name: 'task-test',
+      component: () => import('../views/placeholders/RecordingView.vue'),
+    },
+    {
       path: '/teacher',
       redirect: '/teacher/content',
     },

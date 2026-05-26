@@ -86,7 +86,7 @@ const select = (id: string) => {
               />
             </div>
           </button>
-          <!-- TODO: 若需展示班级更多信息（年级/描述/人数），扩展 ClassItem 并从 teacher//api/classes 映射。 -->
+          <!-- TODO: 若需展示班级更多信息（年级/描述/人数），扩展 ClassItem 并从 teacher/classes 映射。 -->
         </div>
       </div>
     </div>

@@ -14,7 +14,7 @@ const router = useRouter()
 const route = useRoute()
 const toast = useToast()
 
-const classesReq = useAsync<{ success: boolean; classes: TeacherClassItem[]; total_count: number }>()
+const classesReq = useAsync<TeacherClassItem[]>()
 const publishReq = useAsync<void>()
 const segmentReq = useAsync<Awaited<ReturnType<typeof segmentTeacherContent>>>()
 
@@ -29,7 +29,7 @@ const focusedPhonemes = ref<string[]>([])
 const showSelectClass = ref(false)
 const selectedClassId = ref<string | undefined>(undefined)
 
-const phonemes = computed(() => segmentReq.data.value?.suggested_phonemes ?? [])
+const phonemes = computed(() => focusedPhonemes.value)
 
 const autosaveText = computed(() => "自动保存未启用")
 
@@ -44,7 +44,7 @@ const openPublish = () => {
 }
 
 const classItems = computed(() => {
-  const list = classesReq.data.value?.classes ?? []
+  const list = classesReq.data.value ?? []
   return list.map((c, idx) => ({
     id: c.class_id,
     name: c.class_name,
@@ -57,7 +57,7 @@ const loadClasses = async () => {
   await classesReq.run(async () => getTeacherClasses())
   if (!selectedClassId.value) {
     const fromQuery = route.query.classId as string | undefined
-    selectedClassId.value = fromQuery ?? classesReq.data.value?.classes?.[0]?.class_id
+    selectedClassId.value = fromQuery ?? classesReq.data.value?.[0]?.class_id
   }
 }
 
@@ -68,8 +68,7 @@ const doSegment = async () => {
   }
   try {
     const res = await segmentReq.run(async () => segmentTeacherContent(textContent.value))
-    focusedPhonemes.value = res.suggested_phonemes ?? []
-    toast.push(`已分句：${res.sentence_count} 句`, 'success')
+    toast.push(`已分句：${res.segments.length} 句`, 'success')
   } catch {
     toast.push('分句失败，请稍后重试', 'error')
   }
@@ -91,8 +90,12 @@ const publish = async () => {
       classId: selectedClassId.value!,
       title: title.value.trim(),
       contentText: textContent.value,
+      taskType: selectedMode.value === '综合作业' ? 'homework' : 'practice',
       maxSubmission: attemptsLimit.value,
       targetPhonemes: focusedPhonemes.value,
+      availableUntil: dueDate.value.yyyy && dueDate.value.mm && dueDate.value.dd
+        ? new Date(Number(dueDate.value.yyyy), Number(dueDate.value.mm) - 1, Number(dueDate.value.dd)).toISOString()
+        : null,
     })
     toast.push('已创建并发布', 'success')
     await router.push('/teacher/content')

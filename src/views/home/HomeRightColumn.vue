@@ -41,7 +41,7 @@ import SkeletonBlock from '../../components/SkeletonBlock.vue'
         <SkeletonBlock class="h-14 w-full" />
         <SkeletonBlock class="h-14 w-full" />
         <SkeletonBlock class="h-14 w-full" />
-        <!-- TODO: 接入 /api/create_reading_session、/api/process_sentence、/api/submit_session，并将返回的 evaluation / word_data 映射为“综合评测报告 + 单句评分分析”。 -->
+        <!-- TODO: 接入 /student/test/create_session、/student/pron-test/analyze、/student/test/submit_session，并将返回的 evaluation 映射为“综合评测报告 + 单句评分分析”。 -->
       </div>
     </div>
   </div>

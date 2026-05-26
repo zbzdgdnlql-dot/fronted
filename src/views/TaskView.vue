@@ -1,39 +1,67 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import TaskSidebar from './tasks/TaskSidebar.vue'
 import TaskMain from './tasks/TaskMain.vue'
 import ErrorState from '../components/ErrorState.vue'
-import { getStudentCustomContentRecords, getStudentCustomContents, type StudentContentRecordItem, type StudentCustomContentItem } from '../api/endpoints'
+import {
+  getStudentSessionDetails,
+  getStudentTaskDetail,
+  getStudentTaskRecords,
+  getStudentTasks,
+  type StudentSessionEvaluationItem,
+  type StudentTaskDetail,
+  type StudentTaskItem,
+  type StudentTaskRecordItem,
+} from '../api/endpoints'
 import { useAsync } from '../composables/useAsync'
 import { useToast } from '../composables/useToast'
+import { useAuth } from '../stores/auth'
 
 const toast = useToast()
-const listReq = useAsync<{ class_content: StudentCustomContentItem[] }>()
-const recordsReq = useAsync<{ class_content: StudentContentRecordItem[] }>()
+const auth = useAuth()
+const router = useRouter()
+const listReq = useAsync<{ ok: boolean; data: StudentTaskItem[] }>()
+const taskDetailReq = useAsync<{ ok: boolean; data: StudentTaskDetail }>()
+const recordsReq = useAsync<{ tasks: StudentTaskRecordItem[] }>()
+const detailsReq = useAsync<{ success: boolean; details: StudentSessionEvaluationItem[] }>()
 
-const selectedContentId = ref<string | null>(null)
+const selectedTaskId = ref<string | null>(null)
+const selectedSessionId = ref<string | null>(null)
 
-const items = computed(() => listReq.data.value?.class_content ?? [])
-const records = computed(() => recordsReq.data.value?.class_content ?? [])
+const currentClassId = computed(() => auth.session.value?.class_context?.class_id ?? null)
+const items = computed(() => listReq.data.value?.data ?? [])
+const selectedTaskDetail = computed(() => taskDetailReq.data.value?.data ?? null)
+const records = computed(() => recordsReq.data.value?.tasks ?? [])
+const details = computed(() => detailsReq.data.value?.details ?? [])
 
 const loadList = async () => {
+  if (!currentClassId.value) {
+    listReq.data.value = { ok: true, data: [] }
+    selectedTaskId.value = null
+    return
+  }
   await listReq.run(async () => {
-    const res = await getStudentCustomContents()
+    const res = await getStudentTasks(currentClassId.value)
     return res
   })
-  if (!selectedContentId.value && items.value.length) selectedContentId.value = items.value[0].content_id
+  selectedTaskId.value = items.value[0]?.task_id ?? null
 }
 
 const loadRecords = async () => {
-  if (!selectedContentId.value) return
+  if (!selectedTaskId.value) return
+  await taskDetailReq.run(() => getStudentTaskDetail(selectedTaskId.value!))
   await recordsReq.run(async () => {
-    const res = await getStudentCustomContentRecords(selectedContentId.value!)
+    const res = await getStudentTaskRecords(selectedTaskId.value!)
     return res
   })
+  selectedSessionId.value = records.value[0]?.session_id ?? null
+  detailsReq.data.value = null
+  if (selectedSessionId.value) await loadSessionDetails(selectedSessionId.value)
 }
 
-const select = async (contentId: string) => {
-  selectedContentId.value = contentId
+const select = async (taskId: string) => {
+  selectedTaskId.value = taskId
   try {
     await loadRecords()
   } catch {
@@ -41,14 +69,32 @@ const select = async (contentId: string) => {
   }
 }
 
-onMounted(async () => {
+const loadSessionDetails = async (sessionId = selectedSessionId.value) => {
+  if (!sessionId) return
+  selectedSessionId.value = sessionId
+  try {
+    await detailsReq.run(() => getStudentSessionDetails(sessionId))
+  } catch {
+    toast.push('获取句子明细失败，可点击重试', 'error')
+  }
+}
+
+const startTest = async (taskId: number) => {
+  await router.push({ name: 'task-test', params: { taskId: String(taskId) } })
+}
+
+watch(currentClassId, async () => {
+  selectedSessionId.value = null
+  taskDetailReq.data.value = null
+  recordsReq.data.value = null
+  detailsReq.data.value = null
   try {
     await loadList()
     await loadRecords()
   } catch {
     toast.push('获取任务列表失败，可点击重试', 'error')
   }
-})
+}, { immediate: true })
 </script>
 
 <template>
@@ -64,7 +110,7 @@ onMounted(async () => {
         v-else
         :items="items"
         :loading="listReq.loading.value"
-        :selected-content-id="selectedContentId"
+        :selected-task-id="selectedTaskId"
         @select="select"
       />
     </div>
@@ -78,9 +124,17 @@ onMounted(async () => {
       <TaskMain
         v-else
         :loading="recordsReq.loading.value"
+        :task-detail="selectedTaskDetail"
+        :task-detail-loading="taskDetailReq.loading.value"
+        :task-detail-error="taskDetailReq.error.value"
         :records="records"
+        :selected-session-id="selectedSessionId"
+        :details="details"
+        :details-loading="detailsReq.loading.value"
+        :details-error="detailsReq.error.value"
+        @select-record="loadSessionDetails"
+        @start-test="startTest"
       />
-      <!-- TODO: 接入记录详情：/student/custom_content/detail/<session_id> 与 /student/custom_content/problem_areas/<session_id>，并支持跳转到结果页展示单句评分与薄弱点。 -->
     </div>
   </main>
 </template>

@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { BookOpen, ListTodo, ChevronRight } from 'lucide-vue-next'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
-import type { StudentCustomContentItem } from '../../api/endpoints'
+import type { StudentTaskItem } from '../../api/endpoints'
 
 defineProps<{
-  items: StudentCustomContentItem[]
+  items: StudentTaskItem[]
   loading: boolean
-  selectedContentId: string | null
+  selectedTaskId: string | null
 }>()
 
 defineEmits<{
-  (e: 'select', contentId: string): void
+  (e: 'select', taskId: string): void
 }>()
 </script>
 
@@ -35,15 +35,15 @@ defineEmits<{
         <template v-else>
           <button
             v-for="item in items"
-            :key="item.content_id"
+            :key="item.task_id"
             type="button"
             :class="[
               'p-4 rounded-xl border-2 transition-all cursor-pointer relative overflow-hidden text-left',
-              item.content_id === selectedContentId ? 'border-[#70C125] bg-[#F8FAFB]' : 'border-gray-100 bg-white hover:border-gray-200'
+              item.task_id === selectedTaskId ? 'border-[#70C125] bg-[#F8FAFB]' : 'border-gray-100 bg-white hover:border-gray-200'
             ]"
-            @click="$emit('select', item.content_id)"
+            @click="$emit('select', item.task_id)"
           >
-            <div v-if="item.content_id === selectedContentId" class="absolute left-0 top-0 bottom-0 w-1 bg-[#70C125]"></div>
+            <div v-if="item.task_id === selectedTaskId" class="absolute left-0 top-0 bottom-0 w-1 bg-[#70C125]"></div>
 
             <h4 class="text-[15px] font-bold text-gray-900 mb-3">{{ item.title }}</h4>
 

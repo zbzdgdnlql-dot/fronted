@@ -23,7 +23,6 @@ import SkeletonBlock from '../../components/SkeletonBlock.vue'
         <SkeletonBlock class="h-12 w-full" />
       </section>
     </div>
-    <!-- TODO: 将 /api/process_sentence 返回的 evaluation / word_data 展示为总分与逐句详情；并可跳转到 /student/custom_content/detail/<session_id> 展示归档条目。 -->
+    <!-- TODO: 将 /student/pron-test/analyze 与 /student/test/submit_session 返回结果展示为总分与逐句详情。 -->
   </main>
 </template>
-

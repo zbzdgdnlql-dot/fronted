@@ -12,6 +12,7 @@ export type Session = {
   user_id: string
   user_type: UserType
   class_context?: ClassContext
+  class_contexts?: ClassContext[]
 }
 
 const STORAGE_KEY = 'session'
@@ -27,7 +28,10 @@ function loadSession(): Session | null {
 }
 
 function persistSession(session: Session | null) {
-  if (!session) localStorage.removeItem(STORAGE_KEY)
+  if (!session) {
+    localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem('token')
+  }
   else localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
 }
 
@@ -39,10 +43,23 @@ export function useAuth() {
   const isAuthed = computed(() => !!state.session?.user_id)
   const userType = computed(() => state.session?.user_type)
   const className = computed(() => state.session?.class_context?.class_name)
+  const classContexts = computed(() => state.session?.class_contexts ?? (state.session?.class_context ? [state.session.class_context] : []))
 
   const setSession = (session: Session) => {
     state.session = session
     persistSession(session)
+  }
+
+  const setCurrentClass = (classId: string) => {
+    if (!state.session) return
+    const nextClass = classContexts.value.find((item) => item.class_id === classId)
+    if (!nextClass) return
+    state.session = {
+      ...state.session,
+      class_context: nextClass,
+      class_contexts: classContexts.value,
+    }
+    persistSession(state.session)
   }
 
   const clearSession = () => {
@@ -55,8 +72,9 @@ export function useAuth() {
     isAuthed,
     userType,
     className,
+    classContexts,
     setSession,
+    setCurrentClass,
     clearSession,
   }
 }
-

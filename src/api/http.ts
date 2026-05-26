@@ -20,7 +20,7 @@ export type ApiClientConfig = {
 }
 
 const defaultConfig: ApiClientConfig = {
-  baseUrl: (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '',
+  baseUrl: (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://127.0.0.1:8000',
   timeoutMs: 10_000,
   getToken: () => localStorage.getItem('token'),
 }
@@ -108,7 +108,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       headers,
       body,
       signal,
-      credentials: options.credentials ?? 'include',
+      credentials: options.credentials ?? 'same-origin',
     })
 
     if (res.status >= 200 && res.status < 400) {
@@ -121,7 +121,11 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     const message =
       typeof parsed === 'object' && parsed && 'message' in (parsed as any)
         ? String((parsed as any).message)
-        : messageFromStatus(res.status)
+        : typeof parsed === 'object' && parsed && 'detail' in (parsed as any)
+          ? Array.isArray((parsed as any).detail)
+            ? (parsed as any).detail.map((item: any) => item?.msg ?? String(item)).join('；')
+            : String((parsed as any).detail)
+          : messageFromStatus(res.status)
 
     const code =
       typeof parsed === 'object' && parsed && 'code' in (parsed as any) ? String((parsed as any).code) : undefined
@@ -135,4 +139,3 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     cleanup()
   }
 }
-

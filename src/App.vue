@@ -2,10 +2,14 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import Header from './components/Header.vue'
+import Footer from './components/Footer.vue'
 import ToastHost from './components/ToastHost.vue'
 
 const route = useRoute()
-const showHeader = computed(() => route.meta?.layout !== 'bare')
+const isBare = computed(() => route.meta?.layout === 'bare')
+const isTeacher = computed(() => route.path.startsWith('/teacher'))
+const showHeader = computed(() => !isBare.value && !isTeacher.value)
+const showFooter = computed(() => !isBare.value && !isTeacher.value)
 </script>
 
 <template>
@@ -14,6 +18,8 @@ const showHeader = computed(() => route.meta?.layout !== 'bare')
 
     <Header v-if="showHeader" />
 
-    <router-view></router-view>
+    <router-view />
+
+    <Footer v-if="showFooter" />
   </div>
 </template>

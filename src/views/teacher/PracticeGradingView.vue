@@ -1,262 +1,209 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ChevronLeft, Filter, Search, Mic, Paperclip, Save } from 'lucide-vue-next'
-import { useRoute, useRouter } from 'vue-router'
-import { getTeacherSessionDetails, saveTeacherComments, type StudentSessionEvaluationItem } from '../../api/endpoints'
-import { useAsync } from '../../composables/useAsync'
-import { useToast } from '../../composables/useToast'
-import ErrorState from '../../components/ErrorState.vue'
-import SkeletonBlock from '../../components/SkeletonBlock.vue'
+import { ref, computed } from 'vue'
 
-const router = useRouter()
-const route = useRoute()
-const toast = useToast()
-const detailsReq = useAsync<StudentSessionEvaluationItem[]>()
-const saveReq = useAsync<void>()
+interface SentenceResult {
+  id: string
+  text: string
+  score: number
+  teacherComment: string
+}
 
-const meta = computed(() => {
-  return {
-    classLabel: (route.query.classId as string | undefined) ?? '--',
-    taskId: (route.query.taskId as string | undefined) ?? '--',
-    userId: (route.query.userId as string | undefined) ?? '',
-    studentName: (route.query.student as string | undefined) ?? '--',
-    sessionId: (route.query.sessionId as string | undefined) ?? '--',
-  }
+interface StudentSubmission {
+  id: string
+  studentName: string
+  contentTitle: string
+  score: number | null
+  status: 'pending' | 'graded'
+  submittedAt: string
+  sentences: SentenceResult[]
+  overallComment: string
+}
+
+const submissions = ref<StudentSubmission[]>([])
+const selectedSubmission = ref<StudentSubmission | null>(null)
+const gradingModalOpen = ref(false)
+const activeSentenceIdx = ref(0)
+
+const openGrading = (sub: StudentSubmission) => {
+  selectedSubmission.value = sub
+  activeSentenceIdx.value = 0
+  gradingModalOpen.value = true
+}
+
+const closeGrading = () => {
+  gradingModalOpen.value = false
+  selectedSubmission.value = null
+}
+
+const activeSentence = computed(() => {
+  if (!selectedSubmission.value) return null
+  return selectedSubmission.value.sentences[activeSentenceIdx.value] ?? null
 })
-
-const keyword = ref('')
-
-const selectedSentenceIndex = ref(1)
-const selectedToken = ref('')
-const feedback = ref('')
-
-const details = computed(() => detailsReq.data.value ?? [])
-const totalSentences = computed(() => details.value.length)
-const selectedEvaluation = computed(() => details.value[Math.max(0, selectedSentenceIndex.value - 1)] ?? null)
-
-const filteredDetails = computed(() => {
-  const k = keyword.value.trim().toLowerCase()
-  if (!k) return details.value
-  return details.value.filter((item) => item.sentence_text.toLowerCase().includes(k))
-})
-
-const load = async () => {
-  if (!meta.value.userId || meta.value.sessionId === '--') return
-  const res = await detailsReq.run(() => getTeacherSessionDetails(meta.value.userId, meta.value.sessionId))
-  selectedSentenceIndex.value = res.length ? 1 : 0
-  feedback.value = res[0]?.teacher_notes ?? ''
-}
-
-const selectSentence = (item: StudentSessionEvaluationItem) => {
-  selectedSentenceIndex.value = item.line_number
-  feedback.value = item.teacher_notes ?? ''
-}
-
-const submitFeedback = async () => {
-  if (!selectedEvaluation.value || meta.value.sessionId === '--') return
-  await saveReq.run(async () => {
-    const evaluations = Object.fromEntries(
-      details.value.map((item) => [
-        item.eval_id,
-        item.eval_id === selectedEvaluation.value?.eval_id ? feedback.value : item.teacher_notes ?? '',
-      ]),
-    )
-    await saveTeacherComments({
-      [meta.value.sessionId]: {
-        comment: feedback.value,
-        evaluations,
-      },
-    })
-  })
-  toast.push('批改已保存', 'success')
-  await load()
-}
-
-onMounted(load)
 </script>
 
 <template>
-  <main class="flex-1 w-full max-w-[1440px] mx-auto p-8">
-    <div class="flex flex-col gap-8">
-      <div class="flex items-start justify-between gap-6 flex-wrap">
-        <div class="flex flex-col gap-2">
-          <h2 class="text-2xl font-black text-gray-900 tracking-tight">练习提交</h2>
-          <div class="flex flex-wrap items-center gap-3">
-            <div class="bg-white border border-gray-100 rounded-full px-4 py-2 text-sm font-black text-gray-600">
-              班级: {{ meta.classLabel }}
+  <div class="p-8 flex flex-col gap-8">
+    <div class="flex items-start justify-between">
+      <div>
+        <h2 class="text-2xl font-black text-[#1F2937] tracking-tight">批改面板</h2>
+        <p class="text-sm font-bold text-[#9CA3AF] mt-1">逐句评价学生的发音练习</p>
+      </div>
+    </div>
+
+    <div class="flex gap-8">
+      <div class="flex-1">
+        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] overflow-hidden">
+          <div class="bg-[#F8FAFC] px-6 py-3 grid grid-cols-5 gap-4">
+            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">学生</span>
+            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">练习内容</span>
+            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">得分</span>
+            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">状态</span>
+            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">操作</span>
+          </div>
+
+          <div v-if="submissions.length === 0" class="py-20 text-center">
+            <div class="w-16 h-16 rounded-full bg-[#F1F5F9] mx-auto flex items-center justify-center mb-4">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
             </div>
-            <div class="bg-white border border-gray-100 rounded-full px-4 py-2 text-sm font-black text-gray-600">
-              任务 ID: {{ meta.taskId }}
-            </div>
-            <div class="bg-white border border-gray-100 rounded-full px-4 py-2 text-sm font-black text-gray-600">
-              Session ID: {{ meta.sessionId }}
-            </div>
+            <p class="text-sm font-bold text-[#9CA3AF]">暂无待批改的提交</p>
+          </div>
+
+          <div
+            v-for="sub in submissions"
+            :key="sub.id"
+            class="grid grid-cols-5 gap-4 px-6 py-4 border-t border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors"
+          >
+            <span class="text-sm font-bold text-[#1F2937]">{{ sub.studentName }}</span>
+            <span class="text-sm text-[#64748B]">{{ sub.contentTitle }}</span>
+            <span class="text-sm font-bold" :class="sub.score != null ? 'text-[#1F2937]' : 'text-[#9CA3AF]'">{{ sub.score ?? '—' }}</span>
+            <span>
+              <span
+                :class="[
+                  'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black',
+                  sub.status === 'graded'
+                    ? 'bg-[#F2F5E8] text-[#356B00]'
+                    : 'bg-[#FFF7ED] text-[#F59E0B]',
+                ]"
+              >
+                {{ sub.status === 'graded' ? '已批改' : '待批改' }}
+              </span>
+            </span>
+            <td>
+              <button
+                class="text-xs font-bold text-[#356B00] hover:underline"
+                @click="openGrading(sub)"
+              >
+                进入批改
+              </button>
+            </td>
+          </div>
+        </div>
+      </div>
+
+      <div class="w-[290px] shrink-0 flex flex-col gap-6">
+        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #01658B;">
+          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">提交总数</span>
+          <span class="text-3xl font-black text-[#1F2937]">{{ submissions.length }}</span>
+        </div>
+        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #FFB800;">
+          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">待批改</span>
+          <span class="text-3xl font-black text-[#1F2937]">{{ submissions.filter(s => s.status === 'pending').length }}</span>
+        </div>
+        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #356B00;">
+          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">已批改</span>
+          <span class="text-3xl font-black text-[#1F2937]">{{ submissions.filter(s => s.status === 'graded').length }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <Teleport to="body">
+    <div
+      v-if="gradingModalOpen"
+      class="fixed inset-0 z-50 bg-black/40 backdrop-blur-[7px] flex items-center justify-center"
+      @click.self="closeGrading"
+    >
+      <div class="bg-white rounded-2xl shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] flex overflow-hidden" style="width: 1000px; height: 750px;">
+        <div class="w-[260px] shrink-0 bg-white border-r border-[#F1F5F9] flex flex-col">
+          <div class="px-4 py-4 border-b border-[#F1F5F9]">
+            <h3 class="text-sm font-black text-[#1F2937]">句子列表</h3>
+            <p class="text-xs font-bold text-[#9CA3AF] mt-0.5">{{ selectedSubmission?.studentName }}</p>
+          </div>
+          <div class="flex-1 overflow-auto">
+            <button
+              v-for="(sentence, idx) in selectedSubmission?.sentences"
+              :key="sentence.id"
+              :class="[
+                'w-full text-left px-4 py-3 border-b border-[#F8FAFC] transition-colors',
+                idx === activeSentenceIdx
+                  ? 'bg-[#F2F5E8] border-l-2 border-l-[#356B00]'
+                  : 'hover:bg-[#F8FAFC]',
+              ]"
+              @click="activeSentenceIdx = idx"
+            >
+              <span class="text-xs font-bold text-[#64748B]">句子 {{ idx + 1 }}</span>
+              <p class="text-sm font-bold text-[#1F2937] mt-1 line-clamp-2">{{ sentence.text }}</p>
+              <span class="text-xs font-black text-[#356B00]">{{ sentence.score }}分</span>
+            </button>
           </div>
         </div>
 
-        <button
-          type="button"
-          class="inline-flex items-center gap-2 text-sm font-black text-gray-500 hover:text-gray-700"
-          @click="router.push({ path: '/teacher/submissions', query: { classId: meta.classLabel, taskId: meta.taskId } })"
-        >
-          <ChevronLeft class="w-4 h-4" />
-          返回练习管理
-        </button>
-      </div>
-
-      <div class="grid grid-cols-1 xl:grid-cols-12 gap-8">
-        <ErrorState
-          v-if="detailsReq.error.value"
-          class="xl:col-span-7"
-          title="加载失败"
-          message="无法获取句子明细，请稍后重试。"
-          :busy="detailsReq.loading.value"
-          @retry="load"
-        />
-
-        <section v-else class="xl:col-span-7 bg-white rounded-3xl border border-gray-100 shadow-sm p-6 md:p-8 flex flex-col gap-6">
-          <div class="flex items-center justify-between gap-4 flex-wrap">
-            <h3 class="text-lg font-black text-gray-900">句子明细</h3>
+        <div class="flex-1 flex flex-col p-6 overflow-auto">
+          <div class="flex items-center justify-between mb-6">
+            <div>
+              <h3 class="text-lg font-black text-[#1F2937]">逐句评价</h3>
+              <p class="text-sm text-[#9CA3AF] font-bold">句子 {{ activeSentenceIdx + 1 }} / {{ selectedSubmission?.sentences.length }}</p>
+            </div>
             <div class="flex items-center gap-3">
-              <div class="bg-[#F8F9FA] border border-gray-100 rounded-2xl px-4 py-3 flex items-center gap-2">
-                <Search class="w-4 h-4 text-gray-400" />
-                <input
-                  v-model="keyword"
-                  class="bg-transparent outline-none text-sm font-bold text-gray-800 placeholder:text-gray-400 w-52"
-                  placeholder="筛选"
-                />
-              </div>
-              <div class="w-11 h-11 rounded-2xl bg-[#F8F9FA] border border-gray-100 flex items-center justify-center">
-                <Filter class="w-5 h-5 text-gray-700" />
-              </div>
+              <button class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#475569] hover:bg-[#F8FAFC] transition-colors">保存草稿</button>
+              <button class="px-4 py-2 rounded-lg bg-[#356B00] text-white text-sm font-bold hover:bg-[#2E5E00] transition-colors">提交评分</button>
             </div>
           </div>
 
-          <div class="overflow-hidden rounded-2xl border border-gray-100">
-            <table class="w-full text-left">
-              <thead class="bg-[#F8F9FA]">
-                <tr class="text-xs font-black text-gray-400 uppercase tracking-widest">
-                  <th class="px-5 py-4">句子</th>
-                  <th class="px-5 py-4">总分</th>
-                  <th class="px-5 py-4">发音</th>
-                  <th class="px-5 py-4">时间</th>
-                </tr>
-              </thead>
-              <tbody class="bg-white">
-                <tr v-if="detailsReq.loading.value">
-                  <td class="px-5 py-4" colspan="4">
-                    <div class="flex flex-col gap-3">
-                      <SkeletonBlock class="h-10 w-full" />
-                      <SkeletonBlock class="h-10 w-full" />
-                      <SkeletonBlock class="h-10 w-full" />
-                    </div>
-                  </td>
-                </tr>
-                <tr v-else-if="filteredDetails.length === 0">
-                  <td class="px-5 py-8 text-sm font-bold text-gray-500" colspan="4">暂无句子明细</td>
-                </tr>
-                <tr
-                  v-for="item in filteredDetails"
-                  v-else
-                  :key="item.eval_id"
-                  class="border-b border-gray-100 last:border-b-0 cursor-pointer hover:bg-gray-50"
-                  @click="selectSentence(item)"
+          <div v-if="activeSentence" class="flex flex-col gap-6">
+            <div class="bg-[#F8FAFC] rounded-xl p-4">
+              <p class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider mb-2">原文</p>
+              <p class="text-base font-bold text-[#1F2937]">{{ activeSentence.text }}</p>
+            </div>
+
+            <div class="flex flex-col gap-3">
+              <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">评分</span>
+              <div class="flex items-center gap-2">
+                <button
+                  v-for="score in [1, 2, 3, 4, 5]"
+                  :key="score"
+                  :class="[
+                    'w-10 h-10 rounded-lg text-sm font-black transition-colors',
+                    score <= activeSentence.score
+                      ? 'bg-[#356B00] text-white'
+                      : 'bg-[#F1F5F9] text-[#9CA3AF] hover:bg-[#E2E8F0]',
+                  ]"
                 >
-                  <td class="px-5 py-4">
-                    <div class="text-xs font-black text-gray-400">第 {{ item.line_number }} 句</div>
-                    <div class="text-sm font-extrabold text-gray-900 line-clamp-2">{{ item.sentence_text }}</div>
-                  </td>
-                  <td class="px-5 py-4 text-sm font-black text-gray-700">{{ item.total_score }}</td>
-                  <td class="px-5 py-4 text-sm font-black text-gray-700">{{ item.pronunciation }}</td>
-                  <td class="px-5 py-4 text-sm font-bold text-gray-600">{{ item.created_at }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+                  {{ score }}
+                </button>
+              </div>
+            </div>
 
-          <div class="flex items-center justify-between text-sm font-bold text-gray-400">
-            <div>共 {{ filteredDetails.length }} 个句子</div>
-            <div class="text-sm font-black text-gray-500">历史</div>
-          </div>
-        </section>
-
-        <section class="xl:col-span-5 bg-white rounded-3xl border border-gray-100 shadow-sm p-6 md:p-8 flex flex-col gap-6">
-          <div class="flex items-center justify-between">
-            <h3 class="text-lg font-black text-gray-900">作业内容</h3>
-            <div class="text-sm font-bold text-gray-400">{{ meta.studentName }}</div>
-          </div>
-
-          <div class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4">
-            <div class="text-sm font-extrabold text-gray-900 mb-2">选择一个句子进行批改</div>
-            <div class="flex items-center justify-between gap-3">
-              <div class="text-sm font-bold text-gray-500">第 <span class="font-black text-gray-900">{{ selectedSentenceIndex }}</span> / {{ totalSentences }} 句</div>
-              <input
-                v-model.number="selectedSentenceIndex"
-                type="range"
-                min="1"
-                :max="Math.max(totalSentences, 1)"
-                class="w-40"
-                :disabled="totalSentences === 0"
+            <div class="flex flex-col gap-3">
+              <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">教师评语</span>
+              <textarea
+                :value="activeSentence.teacherComment"
+                class="w-full h-32 rounded-xl border border-[#E2E8F0] p-4 text-sm text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none"
+                placeholder="输入对该句子的评价..."
               />
             </div>
           </div>
 
-          <div class="flex flex-col gap-4">
-            <div class="text-xs font-black text-gray-400 uppercase tracking-widest">发音检测 / PRONUNCIATION</div>
-            <div class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex items-center justify-between">
-              <div class="text-lg font-black text-gray-900">{{ selectedToken || selectedEvaluation?.sentence_text || '--' }}</div>
-              <div class="text-sm font-black text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
-                {{ selectedEvaluation ? `${selectedEvaluation.total_score} 分` : '暂无' }}
-              </div>
-            </div>
-
-            <div class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4">
-              <div class="flex items-center justify-between text-sm font-bold text-gray-500 mb-3">
-                <span>发音 {{ selectedEvaluation?.pronunciation ?? '--' }} · 流利 {{ selectedEvaluation?.fluency ?? '--' }}</span>
-                <Mic class="w-4 h-4 text-gray-500" />
-              </div>
-              <div class="h-2 rounded-full bg-white border border-gray-100 overflow-hidden">
-                <div class="h-full w-1/3 bg-[#70C125]" />
-              </div>
-            </div>
-          </div>
-
-          <div class="flex flex-col gap-3">
-            <div class="text-xs font-black text-gray-400 uppercase tracking-widest">教师评语 / Feedback</div>
+          <div v-if="selectedSubmission" class="mt-auto pt-6 border-t border-[#F1F5F9]">
+            <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">总体评价</span>
             <textarea
-              v-model="feedback"
-              class="w-full min-h-[140px] bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 outline-none resize-none text-sm font-medium text-gray-800 placeholder:text-gray-400"
-              placeholder="在此输入针对该句子的具体反馈..."
+              :value="selectedSubmission.overallComment"
+              class="w-full h-24 rounded-xl border border-[#E2E8F0] p-4 text-sm text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none mt-3"
+              placeholder="输入总体评语..."
             />
           </div>
-
-          <div class="flex items-center gap-3 flex-wrap">
-            <button type="button" class="bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-black text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-              <Mic class="w-4 h-4" />
-              语音评注
-            </button>
-            <button type="button" class="bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm font-black text-gray-700 hover:bg-gray-50 flex items-center gap-2">
-              <Paperclip class="w-4 h-4" />
-              附件
-            </button>
-          </div>
-
-          <div class="flex items-center justify-end gap-3 pt-2">
-            <button type="button" class="bg-white border border-gray-100 rounded-2xl px-5 py-3 text-sm font-black text-gray-700 hover:bg-gray-50">
-              取消
-            </button>
-            <button
-              type="button"
-              class="bg-[#70C125] text-white rounded-2xl px-5 py-3 text-sm font-black hover:bg-[#63ad20] border-b-4 border-[#5E9E1A] active:border-b-0 active:translate-y-1 transition-all flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-              :disabled="saveReq.loading.value || !selectedEvaluation"
-              @click="submitFeedback"
-            >
-              <Save class="w-4 h-4" />
-              {{ saveReq.loading.value ? '保存中...' : '提交批改' }}
-            </button>
-          </div>
-        </section>
+        </div>
       </div>
     </div>
-  </main>
+  </Teleport>
 </template>

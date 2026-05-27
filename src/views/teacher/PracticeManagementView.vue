@@ -1,27 +1,54 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getTeacherDashboard, getTeacherClassContents } from '../../api/endpoints'
-import type { TeacherDashboardResponse, TeacherContentItem } from '../../api/endpoints'
+import { deleteTeacherTask, getTeacherClasses, getTeacherDashboard, getTeacherTasks } from '../../api/endpoints'
+import type { TeacherClassItem, TeacherDashboardResponse, TeacherContentItem } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
+import { useToast } from '../../composables/useToast'
 import ErrorState from '../../components/ErrorState.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 
 const router = useRouter()
+const toast = useToast()
 const dashReq = useAsync<TeacherDashboardResponse>()
+const classesReq = useAsync<TeacherClassItem[]>()
+const tasksReq = useAsync<TeacherContentItem[]>()
 const dashData = ref<TeacherDashboardResponse | null>(null)
+const classes = ref<TeacherClassItem[]>([])
 const contentList = ref<TeacherContentItem[]>([])
+const selectedClassId = ref('all')
 
 onMounted(load)
 
 async function load() {
-  dashData.value = await dashReq.run(async () => getTeacherDashboard())
-  if (dashData.value) {
-    try {
-      const res = await getTeacherClassContents('mock-class-001')
-      contentList.value = res.content_list ?? []
-    } catch {}
+  const [dashboard, classRows, taskRows] = await Promise.all([
+    dashReq.run(() => getTeacherDashboard()),
+    classesReq.run(() => getTeacherClasses()),
+    tasksReq.run(() => getTeacherTasks()),
+  ])
+  dashData.value = dashboard
+  classes.value = classRows
+  contentList.value = taskRows
+}
+
+const filteredContentList = computed(() => {
+  if (selectedClassId.value === 'all') return contentList.value
+  return contentList.value.filter((item) => item.course.some((course) => course.class_id === selectedClassId.value))
+})
+
+const removeTask = async (taskId: number) => {
+  try {
+    await deleteTeacherTask(taskId)
+    contentList.value = contentList.value.filter((item) => item.task_id !== taskId)
+    toast.push('任务已删除', 'success')
+  } catch {
+    toast.push('删除失败，请稍后重试', 'error')
   }
+}
+
+const formatDate = (value: string | null) => {
+  if (!value) return '-'
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
 const statCards = [
@@ -31,7 +58,7 @@ const statCards = [
   { label: '待处理', key: null as null, color: '#BA1A1A', fallback: '-' },
 ]
 
-const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', '操作']
+const tableHeaders = ['内容标题', '所属班级', '截止时间', '类型', '操作']
 </script>
 
 <template>
@@ -54,13 +81,17 @@ const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', 
             type="button"
             class="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#E2E8F0] bg-white text-sm font-bold text-[#475569] hover:bg-[#F8FAFC] shadow-sm transition-colors"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
-            筛选班级
+            <select v-model="selectedClassId" class="bg-transparent outline-none">
+              <option value="all">全部班级</option>
+              <option v-for="item in classes" :key="item.class_id" :value="item.class_id">
+                {{ item.class_name }}
+              </option>
+            </select>
           </button>
           <button
             type="button"
             class="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F2F5E8] text-sm font-bold text-[#356B00] hover:bg-[#E5EED3] shadow-sm transition-colors"
-            @click="router.push('/teacher/exercise')"
+            @click="router.push('/teacher/assignments/create')"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
             创建新内容
@@ -118,33 +149,43 @@ const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', 
             </tr>
           </thead>
           <tbody>
-            <tr v-if="contentList.length === 0 && !dashReq.loading.value">
+            <tr v-if="filteredContentList.length === 0 && !tasksReq.loading.value">
               <td :colspan="tableHeaders.length" class="text-center py-16 text-sm font-bold text-[#9CA3AF]">
                 暂无内容，点击「创建新内容」开始
               </td>
             </tr>
+            <tr v-if="tasksReq.loading.value">
+              <td :colspan="tableHeaders.length" class="px-6 py-6">
+                <SkeletonBlock class="h-10 w-full" />
+              </td>
+            </tr>
             <tr
-              v-for="item in contentList"
-              :key="item.content_id"
+              v-for="item in filteredContentList"
+              :key="item.task_id"
               class="border-t border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors"
             >
               <td class="px-6 py-4 text-sm font-bold text-[#1F2937]">{{ item.title || '未命名' }}</td>
-              <td class="px-6 py-4 text-sm text-[#64748B]">{{ item.created_at?.slice(0, 10) || '-' }}</td>
-              <td class="px-6 py-4 text-sm text-[#64748B]">{{ item.updated_at?.slice(0, 10) || '-' }}</td>
+              <td class="px-6 py-4 text-sm text-[#64748B]">{{ item.course.map((course) => course.class_name).join('、') || '-' }}</td>
+              <td class="px-6 py-4 text-sm text-[#64748B]">{{ formatDate(item.available_until) }}</td>
               <td class="px-6 py-4">
                 <span
                   :class="[
                     'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black',
-                    item.is_active ? 'bg-[#F2F5E8] text-[#356B00]' : 'bg-[#F1F5F9] text-[#94A3B8]',
+                    item.available_until ? 'bg-[#F2F5E8] text-[#356B00]' : 'bg-[#F1F5F9] text-[#94A3B8]',
                   ]"
                 >
-                  {{ item.is_active ? '活跃' : '停用' }}
+                  {{ item.task_type === 'homework' ? '作业' : '练习' }} · {{ item.segments.length }} 句
                 </span>
               </td>
               <td class="px-6 py-4">
                 <div class="flex items-center gap-2">
-                  <button class="text-xs font-bold text-[#356B00] hover:underline">编辑</button>
-                  <button class="text-xs font-bold text-[#94A3B8] hover:text-[#475569]">查看</button>
+                  <button
+                    class="text-xs font-bold text-[#356B00] hover:underline"
+                    @click="router.push({ path: '/teacher/submissions', query: { taskId: item.task_id, classId: selectedClassId === 'all' ? item.course[0]?.class_id : selectedClassId } })"
+                  >
+                    查看
+                  </button>
+                  <button class="text-xs font-bold text-[#BA1A1A] hover:underline" @click="removeTask(item.task_id)">删除</button>
                 </div>
               </td>
             </tr>
@@ -152,7 +193,7 @@ const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', 
         </table>
 
         <div class="flex items-center justify-between px-6 py-4 border-t border-[#F1F5F9] bg-[rgba(248,250,252,0.5)]">
-          <span class="text-sm text-[#64748B] font-bold">共 {{ contentList.length }} 项</span>
+          <span class="text-sm text-[#64748B] font-bold">共 {{ filteredContentList.length }} 项</span>
           <div class="flex items-center gap-2">
             <button class="w-8 h-8 flex items-center justify-center rounded-lg text-sm font-bold text-[#9CA3AF] hover:bg-[#F1F5F9] disabled:opacity-30" disabled>‹</button>
             <button class="w-8 h-8 flex items-center justify-center rounded-lg text-sm font-bold bg-[#F2F5E8] text-[#356B00]">1</button>

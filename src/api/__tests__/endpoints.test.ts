@@ -30,12 +30,18 @@ import {
   getTeacherBasicInformation,
   getTeacherDashboard,
   getTeacherClasses,
+  getTeacherClassStudents,
   getTeacherClassContents,
   getTeacherTaskRecords,
+  getTeacherStudentBasicInformation,
+  getTeacherStudentRecords,
+  getTeacherTaskBasicInformation,
   validateTeacherContent,
   segmentTeacherContent,
   getTeacherCustomContentRecords,
   createTeacherContent,
+  publishTeacherTask,
+  saveTeacherTask,
 } from '../endpoints'
 
 describe('api/endpoints', () => {
@@ -147,6 +153,38 @@ describe('api/endpoints', () => {
     expect(request).toHaveBeenCalledWith('teacher/tasks', expect.objectContaining({ method: 'GET' }))
   })
 
+  it('teacher class students uses POST teacher/class/students', async () => {
+    await getTeacherClassStudents('c1')
+    expect(request).toHaveBeenCalledWith(
+      'teacher/class/students',
+      expect.objectContaining({ method: 'POST', body: { class_id: 'c1' } }),
+    )
+  })
+
+  it('teacher student basic information uses POST teacher/student/basic_information', async () => {
+    await getTeacherStudentBasicInformation('9')
+    expect(request).toHaveBeenCalledWith(
+      'teacher/student/basic_information',
+      expect.objectContaining({ method: 'POST', body: { user_id: 9, time_range: null } }),
+    )
+  })
+
+  it('teacher student records uses POST teacher/student/records', async () => {
+    await getTeacherStudentRecords('9')
+    expect(request).toHaveBeenCalledWith(
+      'teacher/student/records',
+      expect.objectContaining({ method: 'POST', body: { user_id: 9, time_range: null } }),
+    )
+  })
+
+  it('teacher task basic information uses POST teacher/task/basic_information', async () => {
+    await getTeacherTaskBasicInformation('c1', '2')
+    expect(request).toHaveBeenCalledWith(
+      'teacher/task/basic_information',
+      expect.objectContaining({ method: 'POST', body: { class_id: 'c1', task_id: 2, time_range: null } }),
+    )
+  })
+
   it('validate content is local because latest backend has no validate route', async () => {
     const res = await validateTeacherContent('hello')
     expect(res.valid).toBe(true)
@@ -181,6 +219,42 @@ describe('api/endpoints', () => {
     const call = (request as any).mock.calls.find((c: any[]) => c[0] === 'teacher/task/save')
     expect(call).toBeTruthy()
     expect(call[1]).toEqual(expect.objectContaining({ method: 'POST' }))
-    expect(call[1].body).toEqual(expect.objectContaining({ course: ['c1'], title: 't' }))
+    expect(call[1].body).toEqual(expect.objectContaining({ course: ['c1'], title: 't', available_from: expect.any(String), available_until: expect.any(String) }))
+  })
+
+  it('publish teacher task uses POST teacher/task/save with create payload', async () => {
+    await publishTeacherTask({
+      classIds: ['c1', 'c2'],
+      title: 'task',
+      segments: ['hello'],
+      taskType: 'homework',
+      maxAttempt: 3,
+      availableFrom: '2026-05-27T00:00:00.000Z',
+      availableUntil: '2026-05-28T00:00:00.000Z',
+    })
+    expect(request).toHaveBeenCalledWith(
+      'teacher/task/save',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({
+          task_id: null,
+          course: ['c1', 'c2'],
+          task_type: 'homework',
+          title: 'task',
+          segments: ['hello'],
+          max_attempt: 3,
+          available_from: '2026-05-27T00:00:00.000Z',
+          available_until: '2026-05-28T00:00:00.000Z',
+        }),
+      }),
+    )
+  })
+
+  it('save teacher task uses POST teacher/task/save', async () => {
+    await saveTeacherTask({ taskId: 1, title: 'updated' })
+    expect(request).toHaveBeenCalledWith(
+      'teacher/task/save',
+      expect.objectContaining({ method: 'POST', body: expect.objectContaining({ task_id: 1, title: 'updated' }) }),
+    )
   })
 })

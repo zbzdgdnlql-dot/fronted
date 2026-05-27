@@ -318,6 +318,62 @@ export async function getTeacherClassTasks(classId: string) {
   })
 }
 
+export type TeacherClassStudent = {
+  user_id: number
+  username: string
+  evaluation_count: number
+  last_evaluation: string | null
+  average_score: number | null
+}
+
+export async function getTeacherClassStudents(classId: string) {
+  return request<TeacherClassStudent[]>('teacher/class/students', {
+    method: 'POST',
+    body: { class_id: classId },
+  })
+}
+
+export type TeacherScoreSummary = {
+  overall: number | null
+  pronunciation: number | null
+  rhythm: number | null
+  fluency: number | null
+  integrity: number | null
+  tone: number | null
+}
+
+export async function getTeacherStudentBasicInformation(userId: string | number, timeRange?: string | null) {
+  return request<TeacherScoreSummary>('teacher/student/basic_information', {
+    method: 'POST',
+    body: { user_id: Number(userId), time_range: timeRange ?? null },
+  })
+}
+
+export type TeacherStudentTaskRecord = {
+  task_id: number
+  title: string
+  records_count: number
+  records: Array<{
+    session_id: string
+    average_score: number | null
+    completed_at: string | null
+  }>
+}
+
+export async function getTeacherStudentRecords(userId: string | number, timeRange?: string | null) {
+  return request<TeacherStudentTaskRecord[]>('teacher/student/records', {
+    method: 'POST',
+    body: { user_id: Number(userId), time_range: timeRange ?? null },
+  })
+}
+
+export async function getTeacherTaskBasicInformation(classId: string, taskId: string | number, timeRange?: string | null) {
+  return request<TeacherScoreSummary>('teacher/task/basic_information', {
+    method: 'POST',
+    body: { class_id: classId, task_id: Number(taskId), time_range: timeRange ?? null },
+  })
+}
+
 export type SegmentTeacherContentResponse = {
   segments: string[]
 }
@@ -336,9 +392,12 @@ export async function createTeacherContent(params: {
   taskType?: 'practice' | 'homework'
   maxSubmission?: number
   targetPhonemes?: string[]
+  notes?: string | null
+  availableFrom?: string | null
   availableUntil?: string | null
 }) {
   const segmented = await segmentTeacherContent(params.contentText)
+  const defaultUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
   return request<{ success: boolean }>('teacher/task/save', {
     method: 'POST',
     body: {
@@ -346,9 +405,68 @@ export async function createTeacherContent(params: {
       task_type: params.taskType ?? 'homework',
       title: params.title,
       segments: segmented.segments.length ? segmented.segments : [params.contentText],
+      notes: params.notes ?? null,
       max_attempt: params.maxSubmission,
       target_phoneme: params.targetPhonemes?.length ? params.targetPhonemes : null,
-      available_until: params.availableUntil ?? null,
+      available_from: params.availableFrom ?? new Date().toISOString(),
+      available_until: params.availableUntil ?? defaultUntil,
+    },
+  })
+}
+
+export async function publishTeacherTask(params: {
+  classIds: string[]
+  title: string
+  segments: string[]
+  notes?: string | null
+  taskType: 'practice' | 'homework'
+  maxAttempt?: number | null
+  targetPhoneme?: string[] | null
+  availableFrom: string
+  availableUntil: string
+}) {
+  return request<{ success: boolean }>('teacher/task/save', {
+    method: 'POST',
+    body: {
+      task_id: null,
+      course: params.classIds,
+      task_type: params.taskType,
+      title: params.title,
+      segments: params.segments,
+      notes: params.notes ?? null,
+      max_attempt: params.maxAttempt ?? null,
+      target_phoneme: params.targetPhoneme?.length ? params.targetPhoneme : null,
+      available_from: params.availableFrom,
+      available_until: params.availableUntil,
+    },
+  })
+}
+
+export async function saveTeacherTask(params: {
+  taskId?: string | number | null
+  classIds?: string[]
+  title?: string
+  segments?: string[]
+  notes?: string | null
+  taskType?: 'practice' | 'homework'
+  maxAttempt?: number | null
+  targetPhoneme?: string[] | null
+  availableFrom?: string | null
+  availableUntil?: string | null
+}) {
+  return request<{ success: boolean }>('teacher/task/save', {
+    method: 'POST',
+    body: {
+      task_id: params.taskId == null ? null : Number(params.taskId),
+      course: params.classIds,
+      task_type: params.taskType,
+      title: params.title,
+      segments: params.segments,
+      notes: params.notes,
+      max_attempt: params.maxAttempt,
+      target_phoneme: params.targetPhoneme,
+      available_from: params.availableFrom,
+      available_until: params.availableUntil,
     },
   })
 }

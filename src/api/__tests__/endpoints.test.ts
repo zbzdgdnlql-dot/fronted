@@ -41,7 +41,7 @@ import {
   getTeacherCustomContentRecords,
   createTeacherContent,
   publishTeacherTask,
-  saveTeacherTask,
+  updateTeacherTask,
 } from '../endpoints'
 
 describe('api/endpoints', () => {
@@ -250,11 +250,30 @@ describe('api/endpoints', () => {
     )
   })
 
-  it('save teacher task uses POST teacher/task/save', async () => {
-    await saveTeacherTask({ taskId: 1, title: 'updated' })
+  it('update teacher task uses POST teacher/task/save without segments', async () => {
+    await updateTeacherTask({
+      taskId: 1,
+      title: 'updated',
+      notes: null,
+      maxAttempt: 4,
+      availableFrom: '2026-05-27T00:00:00.000Z',
+    })
     expect(request).toHaveBeenCalledWith(
       'teacher/task/save',
-      expect.objectContaining({ method: 'POST', body: expect.objectContaining({ task_id: 1, title: 'updated' }) }),
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({
+          task_id: 1,
+          title: 'updated',
+          notes: null,
+          max_attempt: 4,
+          available_from: '2026-05-27T00:00:00.000Z',
+        }),
+      }),
     )
+    const call = (request as any).mock.calls.find((c: any[]) => c[0] === 'teacher/task/save')
+    expect(call[1].body).not.toHaveProperty('segments')
+    expect(call[1].body).not.toHaveProperty('course')
+    expect(call[1].body).not.toHaveProperty('task_type')
   })
 })

@@ -1,127 +1,278 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  getTeacherClasses,
+  getTeacherSessionDetails,
   getTeacherTaskRecords,
   getTeacherTasks,
-  type TeacherClassItem,
+  saveTeacherComments,
+  type StudentSessionEvaluationItem,
   type TeacherTaskItem,
   type TeacherTaskRecordStudent,
 } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
+import { useToast } from '../../composables/useToast'
 import ErrorState from '../../components/ErrorState.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 
-interface Submission {
-  id: string
+type TaskClass = TeacherTaskItem['course'][number]
+type NavLevel = 'tasks' | 'classes' | 'sessions'
+
+interface SessionChoice {
   userId: number
-  sessionId: string
   studentName: string
-  contentTitle: string
+  attemptNo: number
+  displayName: string
+  sessionId: string
   score: number | null
-  status: 'pending' | 'graded'
-  submittedAt: string
+  completedAt: string | null
+}
+
+interface StudentSessionGroup {
+  userId: number
+  studentName: string
+  recordsCount: number
+  sessions: SessionChoice[]
+}
+
+interface SentenceResult {
+  id: string
+  text: string
+  score: number
+  teacherComment: string
 }
 
 const route = useRoute()
 const router = useRouter()
-const classesReq = useAsync<TeacherClassItem[]>()
+const toast = useToast()
 const tasksReq = useAsync<TeacherTaskItem[]>()
 const recordsReq = useAsync<TeacherTaskRecordStudent[]>()
-const classes = ref<TeacherClassItem[]>([])
-const tasks = ref<TeacherTaskItem[]>([])
-const submissions = ref<Submission[]>([])
-const selectedClassId = ref((route.query.classId as string | undefined) ?? '')
-const selectedTaskId = ref((route.query.taskId as string | undefined) ?? '')
+const detailsReq = useAsync<StudentSessionEvaluationItem[]>()
+const saveReq = useAsync<{ success: boolean }>()
 
-const availableTasks = computed(() => {
-  if (!selectedClassId.value) return tasks.value
-  return tasks.value.filter((task) => task.course.some((course) => course.class_id === selectedClassId.value))
+const tasks = ref<TeacherTaskItem[]>([])
+const sessionGroups = ref<StudentSessionGroup[]>([])
+const sentences = ref<SentenceResult[]>([])
+const overallComment = ref('')
+const activeSentenceIdx = ref<number | null>(null)
+const selectedTaskId = ref((route.query.taskId as string | undefined) ?? '')
+const selectedClassId = ref((route.query.classId as string | undefined) ?? '')
+const selectedSessionId = ref((route.query.sessionId as string | undefined) ?? '')
+const selectedUserId = ref((route.query.userId as string | undefined) ?? '')
+const navLevel = ref<NavLevel>(selectedClassId.value ? 'sessions' : selectedTaskId.value ? 'classes' : 'tasks')
+const directoryScroll = ref<HTMLElement | null>(null)
+const scrollPositions = ref<Record<NavLevel, number>>({ tasks: 0, classes: 0, sessions: 0 })
+
+const selectedTask = computed(() => tasks.value.find((item) => String(item.task_id) === String(selectedTaskId.value)))
+const taskClasses = computed<TaskClass[]>(() => selectedTask.value?.course ?? [])
+const selectedClass = computed(() => taskClasses.value.find((item) => item.class_id === selectedClassId.value))
+const flatSessions = computed(() => sessionGroups.value.flatMap((student) => student.sessions))
+const selectedSession = computed(() => flatSessions.value.find((item) => item.sessionId === selectedSessionId.value) ?? null)
+const activeSentence = computed(() => (
+  activeSentenceIdx.value == null ? null : sentences.value[activeSentenceIdx.value] ?? null
+))
+
+const stats = computed(() => {
+  const scored = flatSessions.value.filter((session) => session.score != null)
+  return {
+    students: sessionGroups.value.length,
+    sessions: flatSessions.value.length,
+    pending: flatSessions.value.filter((session) => session.score == null).length,
+    avgScore: scored.reduce((sum, session) => sum + (session.score ?? 0), 0) / (scored.length || 1),
+  }
 })
 
-const selectedClass = computed(() => classes.value.find((item) => item.class_id === selectedClassId.value))
-const selectedTask = computed(() => tasks.value.find((item) => String(item.task_id) === String(selectedTaskId.value)))
+const directoryTitle = computed(() => {
+  if (navLevel.value === 'tasks') return '任务目录'
+  if (navLevel.value === 'classes') return '班级目录'
+  return '提交目录'
+})
 
-const stats = computed(() => ({
-  total: submissions.value.length,
-  pending: submissions.value.filter(s => s.status === 'pending').length,
-  graded: submissions.value.filter(s => s.status === 'graded').length,
-  avgScore: submissions.value.reduce((sum, s) => sum + (s.score ?? 0), 0) / (submissions.value.filter(s => s.score != null).length || 1),
-}))
+const directorySubtitle = computed(() => {
+  if (navLevel.value === 'tasks') return '选择一个任务进入班级'
+  if (navLevel.value === 'classes') return selectedTask.value?.title ?? '选择班级'
+  return selectedClass.value?.class_name ?? '选择提交'
+})
 
-const heading = computed(() => `${selectedClass.value?.class_name ?? '班级'} · ${selectedTask.value?.title ?? '练习提交'}`)
-
-const mapRecords = (rows: TeacherTaskRecordStudent[]) => {
-  const taskTitle = selectedTask.value?.title ?? '未命名任务'
-  submissions.value = rows.flatMap((student) => {
-    if (!student.records.length) {
-      return [{
-        id: `${student.user_id}-empty`,
-        userId: student.user_id,
-        sessionId: '',
-        studentName: student.username,
-        contentTitle: taskTitle,
-        score: null,
-        status: 'pending' as const,
-        submittedAt: '-',
-      }]
-    }
-    return student.records.map((record) => ({
-      id: `${student.user_id}-${record.session_id}`,
-      userId: student.user_id,
-      sessionId: record.session_id,
-      studentName: student.username,
-      contentTitle: taskTitle,
-      score: record.average_score,
-      status: record.average_score == null ? 'pending' as const : 'graded' as const,
-      submittedAt: record.completed_at ?? '-',
-    }))
-  })
+const formatDate = (value: string | null) => {
+  if (!value) return '-'
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
-const loadRecords = async () => {
-  if (!selectedClassId.value || !selectedTaskId.value) {
-    submissions.value = []
-    return
-  }
-  const rows = await recordsReq.run(() => getTeacherTaskRecords(selectedClassId.value, selectedTaskId.value))
-  mapRecords(rows)
-}
+const getRecordTime = (value: string | null) => (value ? new Date(value).getTime() : Number.MAX_SAFE_INTEGER)
 
-const load = async () => {
-  const [classRows, taskRows] = await Promise.all([
-    classesReq.run(() => getTeacherClasses()),
-    tasksReq.run(() => getTeacherTasks()),
-  ])
-  classes.value = classRows
-  tasks.value = taskRows
-  if (!selectedClassId.value) selectedClassId.value = classRows[0]?.class_id ?? ''
-  if (!selectedTaskId.value) selectedTaskId.value = availableTasks.value[0]?.task_id ? String(availableTasks.value[0].task_id) : ''
-  await loadRecords()
-}
-
-const openGrading = (sub: Submission) => {
-  if (!sub.sessionId) return
-  router.push({
-    path: '/teacher/grading',
+const updateQuery = () => {
+  void router.replace({
+    path: '/teacher/submissions',
     query: {
-      classId: selectedClassId.value,
-      taskId: selectedTaskId.value,
-      userId: sub.userId,
-      sessionId: sub.sessionId,
+      ...(selectedTaskId.value ? { taskId: selectedTaskId.value } : {}),
+      ...(selectedClassId.value ? { classId: selectedClassId.value } : {}),
+      ...(selectedUserId.value ? { userId: selectedUserId.value } : {}),
+      ...(selectedSessionId.value ? { sessionId: selectedSessionId.value } : {}),
     },
   })
 }
 
-watch([selectedClassId, selectedTaskId], async () => {
-  if (!selectedClassId.value) return
-  if (!availableTasks.value.some((task) => String(task.task_id) === String(selectedTaskId.value))) {
-    selectedTaskId.value = availableTasks.value[0]?.task_id ? String(availableTasks.value[0].task_id) : ''
+const saveDirectoryScroll = () => {
+  if (directoryScroll.value) scrollPositions.value[navLevel.value] = directoryScroll.value.scrollTop
+}
+
+const restoreDirectoryScroll = async () => {
+  await nextTick()
+  if (directoryScroll.value) directoryScroll.value.scrollTop = scrollPositions.value[navLevel.value] ?? 0
+}
+
+const goToLevel = async (level: NavLevel) => {
+  saveDirectoryScroll()
+  navLevel.value = level
+  await restoreDirectoryScroll()
+}
+
+const goBackLevel = async () => {
+  if (navLevel.value === 'sessions') {
+    selectedSessionId.value = ''
+    selectedUserId.value = ''
+    sentences.value = []
+    overallComment.value = ''
+    await goToLevel('classes')
     return
   }
-  await router.replace({ path: '/teacher/submissions', query: { classId: selectedClassId.value, taskId: selectedTaskId.value } })
+  if (navLevel.value === 'classes') {
+    selectedClassId.value = ''
+    selectedSessionId.value = ''
+    selectedUserId.value = ''
+    sessionGroups.value = []
+    sentences.value = []
+    overallComment.value = ''
+    await goToLevel('tasks')
+  }
+}
+
+const syncRouteSelection = () => {
+  if (!selectedTask.value) {
+    selectedTaskId.value = ''
+    selectedClassId.value = ''
+    selectedSessionId.value = ''
+    selectedUserId.value = ''
+    navLevel.value = 'tasks'
+    return
+  }
+  if (selectedClassId.value && !taskClasses.value.some((item) => item.class_id === selectedClassId.value)) {
+    selectedClassId.value = ''
+    selectedSessionId.value = ''
+    selectedUserId.value = ''
+    navLevel.value = 'classes'
+  }
+}
+
+const mapRecords = (rows: TeacherTaskRecordStudent[]) => {
+  sessionGroups.value = rows.map((student) => ({
+    userId: student.user_id,
+    studentName: student.username,
+    recordsCount: student.records_count,
+    sessions: [...student.records].sort((a, b) => getRecordTime(a.completed_at) - getRecordTime(b.completed_at)).map((record, index) => ({
+      userId: student.user_id,
+      studentName: student.username,
+      attemptNo: index + 1,
+      displayName: `${student.username} · 第 ${index + 1} 次提交`,
+      sessionId: record.session_id,
+      score: record.average_score,
+      completedAt: record.completed_at,
+    })),
+  }))
+  if (!flatSessions.value.some((session) => session.sessionId === selectedSessionId.value)) {
+    const first = flatSessions.value[0]
+    selectedSessionId.value = first?.sessionId ?? ''
+    selectedUserId.value = first?.userId ? String(first.userId) : ''
+  }
+}
+
+const mapDetails = (details: StudentSessionEvaluationItem[]) => {
+  sentences.value = details.map((item) => ({
+    id: item.eval_id,
+    text: item.sentence_text,
+    score: Math.max(1, Math.round(item.total_score / 20)),
+    teacherComment: item.teacher_notes ?? '',
+  }))
+  overallComment.value = ''
+  activeSentenceIdx.value = null
+}
+
+const loadSessionDetails = async () => {
+  if (!selectedUserId.value || !selectedSessionId.value) {
+    sentences.value = []
+    overallComment.value = ''
+    return
+  }
+  const details = await detailsReq.run(() => getTeacherSessionDetails(selectedUserId.value, selectedSessionId.value))
+  mapDetails(details)
+}
+
+const loadRecords = async () => {
+  if (!selectedTaskId.value || !selectedClassId.value) {
+    sessionGroups.value = []
+    sentences.value = []
+    return
+  }
+  const rows = await recordsReq.run(() => getTeacherTaskRecords(selectedClassId.value, selectedTaskId.value))
+  mapRecords(rows)
+  await loadSessionDetails()
+}
+
+const load = async () => {
+  tasks.value = await tasksReq.run(() => getTeacherTasks())
+  syncRouteSelection()
+  if (selectedTaskId.value && selectedClassId.value) await loadRecords()
+  updateQuery()
+}
+
+const selectTask = async (taskId: number) => {
+  selectedTaskId.value = String(taskId)
+  selectedClassId.value = ''
+  selectedSessionId.value = ''
+  selectedUserId.value = ''
+  sessionGroups.value = []
+  sentences.value = []
+  overallComment.value = ''
+  await goToLevel('classes')
+}
+
+const selectClass = async (classId: string) => {
+  selectedClassId.value = classId
+  selectedSessionId.value = ''
+  selectedUserId.value = ''
+  sentences.value = []
+  overallComment.value = ''
+  await goToLevel('sessions')
+}
+
+const selectSession = (session: SessionChoice) => {
+  selectedSessionId.value = session.sessionId
+  selectedUserId.value = String(session.userId)
+}
+
+const submitFeedback = async () => {
+  if (!selectedSessionId.value) return
+  const comment = {
+    [selectedSessionId.value]: {
+      comment: overallComment.value,
+      evaluations: Object.fromEntries(sentences.value.map((item) => [item.id, item.teacherComment])),
+    },
+  }
+  await saveReq.run(() => saveTeacherComments(comment))
+  toast.push('评语已提交', 'success')
+}
+
+watch([selectedTaskId, selectedClassId], async () => {
+  updateQuery()
   await loadRecords()
+})
+
+watch(selectedSessionId, async () => {
+  const session = selectedSession.value
+  selectedUserId.value = session?.userId ? String(session.userId) : selectedUserId.value
+  updateQuery()
+  await loadSessionDetails()
 })
 
 onMounted(() => {
@@ -130,99 +281,286 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-8 flex flex-col gap-8">
+  <div class="p-8 flex flex-col gap-6">
     <div class="flex items-start justify-between">
       <div>
-        <h2 class="text-2xl font-black text-[#1F2937] tracking-tight">{{ heading }}</h2>
-        <p class="text-sm font-bold text-[#9CA3AF] mt-1">查看和批改学生的发音练习</p>
+        <h2 class="text-2xl font-black text-[#1F2937] tracking-tight">批改作业</h2>
+        <p class="text-sm font-bold text-[#9CA3AF] mt-1">选择任务、班级和学生提交后直接批改</p>
       </div>
-      <select
-        v-model="selectedClassId"
-        class="px-4 py-2 rounded-lg border border-[#E2E8F0] bg-white text-sm font-bold text-[#475569] outline-none focus:border-[#58CC02]"
-      >
-        <option v-for="item in classes" :key="item.class_id" :value="item.class_id">{{ item.class_name }}</option>
-      </select>
-      <select
-        v-model="selectedTaskId"
-        class="px-4 py-2 rounded-lg border border-[#E2E8F0] bg-white text-sm font-bold text-[#475569] outline-none focus:border-[#58CC02]"
-      >
-        <option v-for="item in availableTasks" :key="item.task_id" :value="String(item.task_id)">{{ item.title }}</option>
-      </select>
     </div>
 
     <ErrorState
-      v-if="classesReq.error.value || tasksReq.error.value || recordsReq.error.value"
-      :message="classesReq.error.value || tasksReq.error.value || recordsReq.error.value || '获取提交记录失败'"
-      :busy="classesReq.loading.value || tasksReq.loading.value || recordsReq.loading.value"
+      v-if="tasksReq.error.value || recordsReq.error.value || detailsReq.error.value"
+      :message="tasksReq.error.value || recordsReq.error.value || detailsReq.error.value || '获取批改记录失败'"
+      :busy="tasksReq.loading.value || recordsReq.loading.value || detailsReq.loading.value"
       @retry="load"
     />
 
-    <div class="flex gap-8">
-      <div class="flex-1 flex flex-col gap-0">
-        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] overflow-hidden">
-          <div class="bg-[#F8FAFC] px-6 py-3 grid grid-cols-5 gap-4">
-            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">学生</span>
-            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">练习内容</span>
-            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">得分</span>
-            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">状态</span>
-            <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">提交时间</span>
-          </div>
-
-          <div v-if="recordsReq.loading.value" class="p-6">
-            <SkeletonBlock class="h-12 w-full" />
-          </div>
-
-          <div v-else-if="submissions.length === 0" class="py-20 text-center">
-            <div class="w-16 h-16 rounded-full bg-[#F1F5F9] mx-auto flex items-center justify-center mb-4">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
-            </div>
-            <p class="text-sm font-bold text-[#9CA3AF]">暂无提交记录</p>
-          </div>
-
-          <div
-            v-for="sub in submissions"
-            :key="sub.id"
-            class="grid grid-cols-5 gap-4 px-6 py-4 border-t border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors cursor-pointer"
-            @click="openGrading(sub)"
+    <div class="grid grid-cols-[360px_minmax(0,1fr)] gap-6 items-start">
+      <aside class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] overflow-hidden h-[calc(100vh-160px)] flex flex-col">
+        <div class="px-5 py-4 border-b border-[#F1F5F9] flex items-center gap-3">
+          <button
+            v-if="navLevel !== 'tasks'"
+            type="button"
+            class="w-8 h-8 rounded-lg border border-[#E2E8F0] text-[#64748B] hover:bg-[#F8FAFC] shrink-0"
+            @click="goBackLevel"
           >
-            <span class="text-sm font-bold text-[#1F2937]">{{ sub.studentName }}</span>
-            <span class="text-sm text-[#64748B]">{{ sub.contentTitle }}</span>
-            <span class="text-sm font-bold" :class="sub.score != null ? 'text-[#1F2937]' : 'text-[#9CA3AF]'">{{ sub.score ?? '—' }}</span>
-            <span>
-              <span
-                :class="[
-                  'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black',
-                  sub.status === 'graded'
-                    ? 'bg-[#F2F5E8] text-[#356B00]'
-                    : 'bg-[#FFF7ED] text-[#F59E0B]',
-                ]"
-              >
-                {{ sub.status === 'graded' ? '已批改' : '待批改' }}
-              </span>
-            </span>
-            <span class="text-sm text-[#9CA3AF]">{{ sub.submittedAt }}</span>
+            ‹
+          </button>
+          <div class="min-w-0">
+            <h3 class="text-sm font-black text-[#1F2937] truncate">{{ directoryTitle }}</h3>
+            <p class="text-xs font-bold text-[#9CA3AF] mt-1 truncate">{{ directorySubtitle }}</p>
           </div>
         </div>
-      </div>
 
-      <div class="w-[290px] shrink-0 flex flex-col gap-6">
-        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #01658B;">
-          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">提交总数</span>
-          <span class="text-3xl font-black text-[#1F2937]">{{ stats.total }}</span>
+        <div ref="directoryScroll" class="flex-1 overflow-y-auto">
+          <template v-if="navLevel === 'tasks'">
+            <div v-if="tasksReq.loading.value" class="p-5">
+              <SkeletonBlock class="h-12 w-full" />
+            </div>
+            <template v-else>
+              <button
+                v-for="task in tasks"
+                :key="task.task_id"
+                type="button"
+                :class="[
+                  'w-full text-left px-5 py-4 border-b border-[#F8FAFC] transition-colors',
+                  String(task.task_id) === String(selectedTaskId)
+                    ? 'bg-[#F2F5E8] text-[#356B00]'
+                    : 'hover:bg-[#F8FAFC] text-[#1F2937]',
+                ]"
+                @click="selectTask(task.task_id)"
+              >
+                <span class="block text-sm font-black line-clamp-2">{{ task.title || '未命名任务' }}</span>
+                <span class="block text-xs font-bold text-[#9CA3AF] mt-1">
+                  {{ task.task_type === 'homework' ? '作业' : '练习' }} · {{ task.course.length }} 个班级
+                </span>
+              </button>
+            </template>
+            <div v-if="!tasksReq.loading.value && tasks.length === 0" class="p-8 text-center text-sm font-bold text-[#9CA3AF]">暂无任务</div>
+          </template>
+
+          <template v-else-if="navLevel === 'classes'">
+            <div v-if="!selectedTask" class="p-8 text-center text-sm font-bold text-[#9CA3AF]">
+              请先选择任务
+            </div>
+            <template v-else>
+              <button
+                v-for="klass in taskClasses"
+                :key="klass.class_id"
+                type="button"
+                :class="[
+                  'w-full text-left px-5 py-4 border-b border-[#F8FAFC] transition-colors',
+                  klass.class_id === selectedClassId
+                    ? 'bg-[#EAF6FF] text-[#01658B]'
+                    : 'hover:bg-[#F8FAFC] text-[#1F2937]',
+                ]"
+                @click="selectClass(klass.class_id)"
+              >
+                <span class="block text-sm font-black line-clamp-2">{{ klass.class_name }}</span>
+                <span class="block text-xs font-bold text-[#9CA3AF] mt-1">{{ klass.class_id }}</span>
+              </button>
+            </template>
+            <div v-if="selectedTask && taskClasses.length === 0" class="p-8 text-center text-sm font-bold text-[#9CA3AF]">该任务暂无班级</div>
+          </template>
+
+          <template v-else>
+            <div v-if="recordsReq.loading.value" class="p-5">
+              <SkeletonBlock class="h-12 w-full" />
+            </div>
+
+            <div v-else-if="sessionGroups.length === 0" class="p-8 text-center text-sm font-bold text-[#9CA3AF]">
+              暂无提交记录
+            </div>
+
+            <div v-else class="divide-y divide-[#F1F5F9]">
+              <div v-for="student in sessionGroups" :key="student.userId" class="px-5 py-4 flex flex-col gap-3">
+                <div>
+                  <p class="text-sm font-black text-[#1F2937]">{{ student.studentName }}</p>
+                  <p class="text-xs font-bold text-[#9CA3AF] mt-1">{{ student.recordsCount }} 次提交</p>
+                </div>
+
+                <div v-if="student.sessions.length === 0" class="rounded-lg bg-[#F8FAFC] px-4 py-3 text-xs font-bold text-[#9CA3AF]">
+                  暂无提交
+                </div>
+
+                <template v-else>
+                  <button
+                    v-for="session in student.sessions"
+                    :key="session.sessionId"
+                    type="button"
+                    :class="[
+                      'w-full rounded-lg border px-4 py-3 text-left transition-colors',
+                      session.sessionId === selectedSessionId
+                        ? 'border-[#356B00] bg-[#F2F5E8]'
+                        : 'border-[#E2E8F0] hover:border-[#58CC02] hover:bg-[#F8FAFC]',
+                    ]"
+                    @click="selectSession(session)"
+                  >
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-xs font-black text-[#1F2937] truncate">{{ session.displayName }}</span>
+                      <span class="text-sm font-black" :class="session.score != null ? 'text-[#356B00]' : 'text-[#9CA3AF]'">
+                        {{ session.score ?? '未评分' }}
+                      </span>
+                    </div>
+                    <p class="text-xs font-bold text-[#9CA3AF] mt-1">{{ formatDate(session.completedAt) }}</p>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </template>
         </div>
-        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #FFB800;">
-          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">待批改</span>
-          <span class="text-3xl font-black text-[#1F2937]">{{ stats.pending }}</span>
+      </aside>
+
+      <section class="min-w-0 flex flex-col gap-4">
+        <div class="grid grid-cols-4 gap-0">
+          <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-5" style="border-left: 4px solid #01658B;">
+            <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">学生数</span>
+            <p class="text-2xl font-black text-[#1F2937] mt-2">{{ stats.students }}</p>
+          </div>
+          <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-5" style="border-left: 4px solid #356B00;">
+            <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">提交次数</span>
+            <p class="text-2xl font-black text-[#1F2937] mt-2">{{ stats.sessions }}</p>
+          </div>
+          <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-5" style="border-left: 4px solid #FFB800;">
+            <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">待查看</span>
+            <p class="text-2xl font-black text-[#1F2937] mt-2">{{ stats.pending }}</p>
+          </div>
+          <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-5" style="border-left: 4px solid #BA1A1A;">
+            <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">平均分</span>
+            <p class="text-2xl font-black text-[#1F2937] mt-2">{{ stats.avgScore.toFixed(1) }}</p>
+          </div>
         </div>
-        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #356B00;">
-          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">已批改</span>
-          <span class="text-3xl font-black text-[#1F2937]">{{ stats.graded }}</span>
+
+        <div class="bg-white rounded-2xl shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.08)] border border-[#F1F5F9] flex overflow-hidden min-h-[680px]">
+          <div class="w-[260px] shrink-0 bg-white border-r border-[#F1F5F9] flex flex-col">
+            <div class="px-4 py-4 border-b border-[#F1F5F9]">
+              <h3 class="text-sm font-black text-[#1F2937]">句子列表</h3>
+              <p class="text-xs font-bold text-[#9CA3AF] mt-0.5">
+                {{ selectedSession?.displayName ?? '未选择提交' }}
+              </p>
+            </div>
+
+            <div v-if="detailsReq.loading.value" class="p-4">
+              <SkeletonBlock class="h-12 w-full" />
+            </div>
+
+            <div v-else-if="sentences.length === 0" class="p-8 text-center text-sm font-bold text-[#9CA3AF]">
+              请选择一个学生提交
+            </div>
+
+            <div v-else class="flex-1 overflow-auto">
+              <button
+                type="button"
+                :class="[
+                  'w-full text-left px-4 py-4 border-b border-[#F8FAFC] transition-colors',
+                  activeSentenceIdx == null
+                    ? 'bg-[#F2F5E8] border-l-2 border-l-[#356B00]'
+                    : 'hover:bg-[#F8FAFC]',
+                ]"
+                @click="activeSentenceIdx = null"
+              >
+                <span class="text-xs font-black text-[#356B00]">总体评价</span>
+                <p class="text-sm font-bold text-[#1F2937] mt-1 line-clamp-2">
+                  {{ overallComment || '填写本次提交的整体反馈' }}
+                </p>
+              </button>
+
+              <button
+                v-for="(sentence, idx) in sentences"
+                :key="sentence.id"
+                type="button"
+                :class="[
+                  'w-full text-left px-4 py-3 border-b border-[#F8FAFC] transition-colors',
+                  idx === activeSentenceIdx
+                    ? 'bg-[#F2F5E8] border-l-2 border-l-[#356B00]'
+                    : 'hover:bg-[#F8FAFC]',
+                ]"
+                @click="activeSentenceIdx = idx"
+              >
+                <span class="text-xs font-bold text-[#64748B]">句子 {{ idx + 1 }}</span>
+                <p class="text-sm font-bold text-[#1F2937] mt-1 line-clamp-2">{{ sentence.text }}</p>
+                <span class="text-xs font-black text-[#356B00]">{{ sentence.score }}分</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="flex-1 flex flex-col p-6 overflow-auto">
+            <div class="flex items-center justify-between mb-6">
+              <div>
+                <h3 class="text-lg font-black text-[#1F2937]">批改面板</h3>
+                <p class="text-sm text-[#9CA3AF] font-bold">
+                  {{ selectedTask?.title ?? '未选择任务' }} · {{ selectedClass?.class_name ?? '未选择班级' }}
+                </p>
+              </div>
+              <button
+                class="px-4 py-2 rounded-lg bg-[#356B00] text-white text-sm font-bold hover:bg-[#2E5E00] transition-colors disabled:opacity-60"
+                :disabled="saveReq.loading.value || !selectedSessionId"
+                @click="submitFeedback"
+              >
+                {{ saveReq.loading.value ? '提交中...' : '提交评分' }}
+              </button>
+            </div>
+
+            <div v-if="selectedSessionId && activeSentenceIdx == null" class="flex flex-col gap-6">
+              <div class="bg-[#F8FAFC] rounded-xl p-4">
+                <p class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider mb-2">总体评价</p>
+                <p class="text-base font-bold text-[#1F2937]">
+                  {{ selectedSession?.displayName ?? '当前提交' }}
+                </p>
+              </div>
+
+              <div class="flex flex-col gap-3">
+                <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">教师总评</span>
+                <textarea
+                  v-model="overallComment"
+                  class="w-full h-40 rounded-xl border border-[#E2E8F0] p-4 text-sm text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none"
+                  placeholder="输入对本次提交的整体评价..."
+                />
+              </div>
+            </div>
+
+            <div v-else-if="activeSentence" class="flex flex-col gap-6">
+              <div class="bg-[#F8FAFC] rounded-xl p-4">
+                <p class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider mb-2">原文</p>
+                <p class="text-base font-bold text-[#1F2937]">{{ activeSentence.text }}</p>
+              </div>
+
+              <div class="flex flex-col gap-3">
+                <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">评分</span>
+                <div class="flex items-center gap-2">
+                  <button
+                    v-for="score in [1, 2, 3, 4, 5]"
+                    :key="score"
+                    type="button"
+                    :class="[
+                      'w-10 h-10 rounded-lg text-sm font-black transition-colors',
+                      score <= activeSentence.score
+                        ? 'bg-[#356B00] text-white'
+                        : 'bg-[#F1F5F9] text-[#9CA3AF]',
+                    ]"
+                  >
+                    {{ score }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="flex flex-col gap-3">
+                <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">教师评语</span>
+                <textarea
+                  v-model="activeSentence.teacherComment"
+                  class="w-full h-32 rounded-xl border border-[#E2E8F0] p-4 text-sm text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none"
+                  placeholder="输入对该句子的评价..."
+                />
+              </div>
+            </div>
+
+            <div v-else class="flex-1 flex items-center justify-center rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC]">
+              <p class="text-sm font-bold text-[#9CA3AF]">从左侧选择一个学生提交开始批改</p>
+            </div>
+          </div>
         </div>
-        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #BA1A1A;">
-          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">平均分</span>
-          <span class="text-3xl font-black text-[#1F2937]">{{ stats.avgScore.toFixed(1) }}</span>
-        </div>
-      </div>
+      </section>
     </div>
   </div>
 </template>

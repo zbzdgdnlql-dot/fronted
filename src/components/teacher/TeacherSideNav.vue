@@ -7,11 +7,11 @@ const route = useRoute()
 const sideLinks = [
   { name: '概览', path: '/teacher/overview', icon: 'overview' },
   { name: '内容管理', path: '/teacher/content', icon: 'content' },
-  { name: '布置作业', path: '/teacher/content', icon: 'assignment' },
+  { name: '布置作业', path: '/teacher/assignments/create', icon: 'assignment' },
   { name: '批改作业', path: '/teacher/submissions', icon: 'grading' },
 ]
 
-const isActive = (path: string) => route.path === path
+const isActive = (path: string) => route.path === path || route.path.startsWith(`${path}/`)
 </script>
 
 <template>

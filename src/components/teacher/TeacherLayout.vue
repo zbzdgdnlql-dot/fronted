@@ -6,7 +6,6 @@ import TeacherTopBar from './TeacherTopBar.vue'
 
 const route = useRoute()
 
-const showSideNav = computed(() => route.path === '/teacher/overview')
 const showBack = computed(() => route.path !== '/teacher/overview' && route.path !== '/teacher/content')
 
 const pageTitle = computed(() => {
@@ -15,7 +14,7 @@ const pageTitle = computed(() => {
     '/teacher/content': '内容管理',
     '/teacher/exercise': '练习管理',
     '/teacher/assignments/create': '创建作业',
-    '/teacher/submissions': '练习提交',
+    '/teacher/submissions': '批改作业',
     '/teacher/grading': '批改',
   }
   return map[route.path] ?? ''
@@ -29,7 +28,7 @@ const pageTitle = computed(() => {
       :show-back="showBack"
     />
     <div class="flex flex-1 overflow-hidden">
-      <TeacherSideNav v-if="showSideNav" />
+      <TeacherSideNav />
       <main class="flex-1 overflow-auto">
         <router-view />
       </main>

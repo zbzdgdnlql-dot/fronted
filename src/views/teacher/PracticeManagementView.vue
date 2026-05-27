@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { deleteTeacherTask, getTeacherClasses, getTeacherDashboard, getTeacherTasks } from '../../api/endpoints'
+import { deleteTeacherTask, getTeacherClasses, getTeacherDashboard, getTeacherTasks, updateTeacherTask } from '../../api/endpoints'
 import type { TeacherClassItem, TeacherDashboardResponse, TeacherContentItem } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
 import { useToast } from '../../composables/useToast'
@@ -13,10 +13,17 @@ const toast = useToast()
 const dashReq = useAsync<TeacherDashboardResponse>()
 const classesReq = useAsync<TeacherClassItem[]>()
 const tasksReq = useAsync<TeacherContentItem[]>()
+const updateReq = useAsync<{ success: boolean }>()
 const dashData = ref<TeacherDashboardResponse | null>(null)
 const classes = ref<TeacherClassItem[]>([])
 const contentList = ref<TeacherContentItem[]>([])
 const selectedClassId = ref('all')
+const editingTask = ref<TeacherContentItem | null>(null)
+const editTitle = ref('')
+const editNotes = ref('')
+const editMaxAttempt = ref<number | null>(null)
+const editAvailableFrom = ref('')
+const editAvailableUntil = ref('')
 
 onMounted(load)
 
@@ -43,6 +50,88 @@ const removeTask = async (taskId: number) => {
     toast.push('任务已删除', 'success')
   } catch {
     toast.push('删除失败，请稍后重试', 'error')
+  }
+}
+
+const toLocalInputValue = (value: string | null) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+const toIso = (value: string) => {
+  if (!value) return null
+  return new Date(value).toISOString()
+}
+
+const sameInstant = (left: string | null, right: string | null) => {
+  if (!left && !right) return true
+  if (!left || !right) return false
+  return new Date(left).getTime() === new Date(right).getTime()
+}
+
+const openEditTask = (task: TeacherContentItem) => {
+  editingTask.value = task
+  editTitle.value = task.title ?? ''
+  editNotes.value = task.notes ?? ''
+  editMaxAttempt.value = task.max_attempt ?? null
+  editAvailableFrom.value = toLocalInputValue(task.available_from)
+  editAvailableUntil.value = toLocalInputValue(task.available_until)
+}
+
+const closeEditTask = () => {
+  if (updateReq.loading.value) return
+  editingTask.value = null
+}
+
+const saveTaskChanges = async () => {
+  const task = editingTask.value
+  if (!task) return
+  const title = editTitle.value.trim()
+  if (!title) {
+    toast.push('请输入任务标题', 'warning')
+    return
+  }
+  const availableFrom = toIso(editAvailableFrom.value)
+  const availableUntil = toIso(editAvailableUntil.value)
+  if (availableFrom && availableUntil && new Date(availableFrom).getTime() >= new Date(availableUntil).getTime()) {
+    toast.push('截止时间需要晚于开始时间', 'warning')
+    return
+  }
+
+  const changes: Parameters<typeof updateTeacherTask>[0] = { taskId: task.task_id }
+  if (title !== (task.title ?? '')) changes.title = title
+  const notes = editNotes.value.trim() || null
+  if (notes !== (task.notes ?? null)) changes.notes = notes
+  if (editMaxAttempt.value !== (task.max_attempt ?? null)) changes.maxAttempt = editMaxAttempt.value
+  if (!sameInstant(availableFrom, task.available_from)) changes.availableFrom = availableFrom
+  if (!sameInstant(availableUntil, task.available_until)) changes.availableUntil = availableUntil
+
+  if (Object.keys(changes).length === 1) {
+    toast.push('没有需要保存的变更', 'info')
+    return
+  }
+
+  try {
+    await updateReq.run(() => updateTeacherTask(changes))
+    contentList.value = contentList.value.map((item) => (
+      item.task_id === task.task_id
+        ? {
+            ...item,
+            title: changes.title ?? item.title,
+            notes: changes.notes !== undefined ? changes.notes : item.notes,
+            max_attempt: changes.maxAttempt !== undefined ? changes.maxAttempt : item.max_attempt,
+            available_from: changes.availableFrom !== undefined ? changes.availableFrom : item.available_from,
+            available_until: changes.availableUntil !== undefined ? changes.availableUntil : item.available_until,
+          }
+        : item
+    ))
+    toast.push('任务已更新', 'success')
+    editingTask.value = null
+  } catch {
+    toast.push(updateReq.error.value ?? '更新失败，请稍后重试', 'error')
   }
 }
 
@@ -185,6 +274,7 @@ const tableHeaders = ['内容标题', '所属班级', '截止时间', '类型', 
                   >
                     查看
                   </button>
+                  <button class="text-xs font-bold text-[#01658B] hover:underline" @click="openEditTask(item)">编辑</button>
                   <button class="text-xs font-bold text-[#BA1A1A] hover:underline" @click="removeTask(item.task_id)">删除</button>
                 </div>
               </td>
@@ -202,5 +292,109 @@ const tableHeaders = ['内容标题', '所属班级', '截止时间', '类型', 
         </div>
       </div>
     </template>
+
+    <div
+      v-if="editingTask"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
+      @click.self="closeEditTask"
+    >
+      <div class="w-full max-w-2xl rounded-xl bg-white shadow-xl border border-[#E2E8F0] overflow-hidden">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-[#F1F5F9]">
+          <div>
+            <h3 class="text-base font-black text-[#1F2937]">编辑任务</h3>
+            <p class="text-xs font-bold text-[#9CA3AF] mt-1">朗读文本发布后不可修改</p>
+          </div>
+          <button
+            type="button"
+            class="w-8 h-8 rounded-lg text-[#64748B] hover:bg-[#F8FAFC]"
+            @click="closeEditTask"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="p-6 grid grid-cols-2 gap-4">
+          <label class="col-span-2 flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">任务标题</span>
+            <input
+              v-model="editTitle"
+              type="text"
+              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+            />
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">开始时间</span>
+            <input
+              v-model="editAvailableFrom"
+              type="datetime-local"
+              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+            />
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">截止时间</span>
+            <input
+              v-model="editAvailableUntil"
+              type="datetime-local"
+              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+            />
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">最大提交次数</span>
+            <input
+              v-model.number="editMaxAttempt"
+              type="number"
+              min="1"
+              max="99"
+              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+            />
+          </label>
+
+          <label class="col-span-2 flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">任务备注</span>
+            <textarea
+              v-model="editNotes"
+              class="h-20 rounded-lg border border-[#E2E8F0] p-3 text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02] resize-none"
+            />
+          </label>
+
+          <div class="col-span-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-4">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <span class="text-xs font-black text-[#64748B]">朗读文本</span>
+              <span class="text-xs font-bold text-[#9CA3AF]">{{ editingTask.segments.length }} 句</span>
+            </div>
+            <div class="max-h-36 overflow-y-auto flex flex-col gap-2">
+              <div
+                v-for="(segment, index) in editingTask.segments"
+                :key="index"
+                class="text-xs leading-relaxed text-[#475569]"
+              >
+                {{ index + 1 }}. {{ segment }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#F1F5F9]">
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#64748B] hover:bg-[#F8FAFC]"
+            @click="closeEditTask"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg bg-[#356B00] text-sm font-bold text-white hover:bg-[#2E5E00] disabled:opacity-60"
+            :disabled="updateReq.loading.value"
+            @click="saveTaskChanges"
+          >
+            {{ updateReq.loading.value ? '保存中...' : '保存修改' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

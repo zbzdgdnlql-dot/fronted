@@ -442,26 +442,22 @@ export async function publishTeacherTask(params: {
   })
 }
 
-export async function saveTeacherTask(params: {
-  taskId?: string | number | null
-  classIds?: string[]
+export type UpdateTeacherTaskParams = {
+  taskId: string | number
   title?: string
-  segments?: string[]
   notes?: string | null
-  taskType?: 'practice' | 'homework'
   maxAttempt?: number | null
   targetPhoneme?: string[] | null
   availableFrom?: string | null
   availableUntil?: string | null
-}) {
+}
+
+export async function updateTeacherTask(params: UpdateTeacherTaskParams) {
   return request<{ success: boolean }>('teacher/task/save', {
     method: 'POST',
     body: {
-      task_id: params.taskId == null ? null : Number(params.taskId),
-      course: params.classIds,
-      task_type: params.taskType,
+      task_id: Number(params.taskId),
       title: params.title,
-      segments: params.segments,
       notes: params.notes,
       max_attempt: params.maxAttempt,
       target_phoneme: params.targetPhoneme,

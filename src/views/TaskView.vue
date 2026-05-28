@@ -32,6 +32,19 @@ const selectedSessionId = ref<string | null>(null)
 const currentClassId = computed(() => auth.session.value?.class_context?.class_id ?? null)
 const items = computed(() => listReq.data.value?.data ?? [])
 const selectedTaskDetail = computed(() => taskDetailReq.data.value?.data ?? null)
+const displayItems = computed(() => {
+  const detail = selectedTaskDetail.value
+  if (!detail) return items.value
+  return items.value.map((item) => {
+    if (String(item.task_id) !== String(detail.task_id)) return item
+    return {
+      ...item,
+      is_active: detail.is_active,
+      available_from: detail.available_from,
+      available_until: detail.available_until,
+    }
+  })
+})
 const records = computed(() => recordsReq.data.value?.tasks ?? [])
 const details = computed(() => detailsReq.data.value?.details ?? [])
 
@@ -108,7 +121,7 @@ watch(currentClassId, async () => {
       />
       <TaskSidebar
         v-else
-        :items="items"
+        :items="displayItems"
         :loading="listReq.loading.value"
         :selected-task-id="selectedTaskId"
         @select="select"

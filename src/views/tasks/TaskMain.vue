@@ -43,6 +43,45 @@ const formatDate = (value: string | null) => {
   if (!value) return '--'
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
+
+type TaskWindowStatus = 'inactive' | 'not_started' | 'ended' | 'open'
+
+const taskWindowStatus = (task: StudentTaskDetail): TaskWindowStatus => {
+  if (!task.is_active) return 'inactive'
+
+  const now = Date.now()
+  const start = task.available_from ? new Date(task.available_from).getTime() : Number.NaN
+  const end = task.available_until ? new Date(task.available_until).getTime() : Number.NaN
+  if (Number.isFinite(start) && now < start) return 'not_started'
+  if (Number.isFinite(end) && now > end) return 'ended'
+  return 'open'
+}
+
+const taskStatusLabel = (task: StudentTaskDetail) => {
+  const labels: Record<TaskWindowStatus, string> = {
+    inactive: '未启用',
+    not_started: '未开始',
+    ended: '已结束',
+    open: '进行中',
+  }
+  return labels[taskWindowStatus(task)]
+}
+
+const taskStatusClass = (task: StudentTaskDetail) => {
+  return taskWindowStatus(task) === 'open' ? 'bg-[#EAF0DD] text-[#70C125]' : 'bg-gray-100 text-gray-500'
+}
+
+const canStartTask = (task: StudentTaskDetail) => taskWindowStatus(task) === 'open'
+
+const startButtonText = (task: StudentTaskDetail) => {
+  const labels: Record<TaskWindowStatus, string> = {
+    inactive: '暂未开放',
+    not_started: '暂未开始',
+    ended: '已结束',
+    open: '进入测试',
+  }
+  return labels[taskWindowStatus(task)]
+}
 </script>
 
 <template>
@@ -73,9 +112,9 @@ const formatDate = (value: string | null) => {
               </span>
               <span
                 class="rounded-full px-3 py-1 text-xs font-black"
-                :class="props.taskDetail.is_active ? 'bg-[#EAF0DD] text-[#70C125]' : 'bg-gray-100 text-gray-500'"
+                :class="taskStatusClass(props.taskDetail)"
               >
-                {{ props.taskDetail.is_active ? '进行中' : '未启用' }}
+                {{ taskStatusLabel(props.taskDetail) }}
               </span>
             </div>
             <h3 class="text-xl font-black text-gray-900">{{ props.taskDetail.title }}</h3>
@@ -88,7 +127,7 @@ const formatDate = (value: string | null) => {
               <span class="text-lg font-black text-gray-900">{{ props.taskDetail.max_attempt ?? '--' }} 次</span>
             </div>
             <button
-              v-if="props.taskDetail.is_active"
+              v-if="canStartTask(props.taskDetail)"
               type="button"
               class="rounded-2xl bg-[#70C125] px-5 py-3 text-sm font-black text-white flex items-center justify-center gap-2 border-b-4 border-[#5E9E1A] hover:bg-[#63ad20] active:border-b-0 active:translate-y-1 transition-all"
               @click="$emit('startTest', props.taskDetail.task_id)"
@@ -103,7 +142,7 @@ const formatDate = (value: string | null) => {
               disabled
             >
               <PlayCircle class="w-5 h-5" />
-              暂未开始
+              {{ startButtonText(props.taskDetail) }}
             </button>
           </div>
         </div>

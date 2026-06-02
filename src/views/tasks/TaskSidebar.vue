@@ -2,6 +2,7 @@
 import { BookOpen, ListTodo, ChevronRight } from 'lucide-vue-next'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 import type { StudentTaskItem } from '../../api/endpoints'
+import { getStudentTaskAvailability, studentTaskAvailabilityLabels } from '../../utils/studentTaskAvailability'
 
 defineProps<{
   items: StudentTaskItem[]
@@ -13,31 +14,26 @@ defineEmits<{
   (e: 'select', taskId: string): void
 }>()
 
-type TaskWindowStatus = 'inactive' | 'not_started' | 'ended' | 'open'
-
-const taskWindowStatus = (item: StudentTaskItem): TaskWindowStatus => {
-  if (!item.is_active) return 'inactive'
-
-  const now = Date.now()
-  const start = item.available_from ? new Date(item.available_from).getTime() : Number.NaN
-  const end = item.available_until ? new Date(item.available_until).getTime() : Number.NaN
-  if (Number.isFinite(start) && now < start) return 'not_started'
-  if (Number.isFinite(end) && now > end) return 'ended'
-  return 'open'
-}
+const taskWindowStatus = (item: StudentTaskItem) => getStudentTaskAvailability({
+  isActive: item.is_active,
+  availableFrom: item.available_from,
+  availableUntil: item.available_until,
+  maxAttempts: item.max_submission,
+  attemptCount: item.attempt_count,
+})
 
 const taskStatusLabel = (item: StudentTaskItem) => {
-  const labels: Record<TaskWindowStatus, string> = {
-    inactive: '未启用',
-    not_started: '未开始',
-    ended: '已结束',
-    open: '进行中',
-  }
-  return labels[taskWindowStatus(item)]
+  return studentTaskAvailabilityLabels[taskWindowStatus(item)]
 }
 
 const taskStatusClass = (item: StudentTaskItem) => {
   return taskWindowStatus(item) === 'open' ? 'bg-[#EAF0DD] text-[#70C125]' : 'bg-gray-100 text-gray-500'
+}
+
+const attemptCount = (item: StudentTaskItem) => item.attempt_count ?? 0
+const completionLabel = (item: StudentTaskItem) => attemptCount(item) >= 1 ? 'completed' : 'uncompleted'
+const completionClass = (item: StudentTaskItem) => {
+  return attemptCount(item) >= 1 ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'
 }
 </script>
 
@@ -81,7 +77,14 @@ const taskStatusClass = (item: StudentTaskItem) => {
               >
                 {{ taskStatusLabel(item) }}
               </span>
+              <span
+                class="px-2 py-0.5 rounded text-xs font-black"
+                :class="completionClass(item)"
+              >
+                {{ completionLabel(item) }}
+              </span>
               <span class="text-xs font-medium text-gray-500">平均分: {{ item.avg_score < 0 ? '--' : item.avg_score.toFixed(1) }}</span>
+              <span class="text-xs font-black text-gray-400">已尝试 {{ attemptCount(item) }} 次</span>
             </div>
           </button>
         </template>

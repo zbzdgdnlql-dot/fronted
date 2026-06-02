@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { PlayCircle, Square } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  getTeacherEvaluationAudio,
   getTeacherSessionDetails,
   getTeacherTaskRecords,
   getTeacherTasks,
@@ -37,6 +39,7 @@ interface StudentSessionGroup {
 
 interface SentenceResult {
   id: string
+  audioFileId: string | null
   text: string
   score: number
   teacherComment: string
@@ -55,6 +58,13 @@ const sessionGroups = ref<StudentSessionGroup[]>([])
 const sentences = ref<SentenceResult[]>([])
 const overallComment = ref('')
 const activeSentenceIdx = ref<number | null>(null)
+const loadingAudioId = ref<string | null>(null)
+const playingAudioId = ref<string | null>(null)
+const audioCurrentTime = ref(0)
+const audioDuration = ref(0)
+const audioVolume = ref(1)
+const currentAudio = ref<HTMLAudioElement | null>(null)
+const currentAudioUrl = ref<string | null>(null)
 const selectedTaskId = ref((route.query.taskId as string | undefined) ?? '')
 const selectedClassId = ref((route.query.classId as string | undefined) ?? '')
 const selectedSessionId = ref((route.query.sessionId as string | undefined) ?? '')
@@ -100,6 +110,76 @@ const formatDate = (value: string | null) => {
 }
 
 const getRecordTime = (value: string | null) => (value ? new Date(value).getTime() : Number.MAX_SAFE_INTEGER)
+
+const formatAudioTime = (seconds: number) => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
+  const minutes = Math.floor(seconds / 60)
+  const rest = Math.floor(seconds % 60).toString().padStart(2, '0')
+  return `${minutes}:${rest}`
+}
+
+const audioProgress = computed(() => {
+  if (!audioDuration.value) return 0
+  return Math.min(Math.max((audioCurrentTime.value / audioDuration.value) * 100, 0), 100)
+})
+
+const updateAudioVolume = () => {
+  if (currentAudio.value) currentAudio.value.volume = audioVolume.value
+}
+
+const cleanupAudio = () => {
+  if (currentAudio.value) {
+    currentAudio.value.pause()
+    currentAudio.value.src = ''
+    currentAudio.value = null
+  }
+  if (currentAudioUrl.value) {
+    URL.revokeObjectURL(currentAudioUrl.value)
+    currentAudioUrl.value = null
+  }
+  playingAudioId.value = null
+  loadingAudioId.value = null
+  audioCurrentTime.value = 0
+  audioDuration.value = 0
+}
+
+const playEvaluationAudio = async (sentence: SentenceResult) => {
+  if (playingAudioId.value === sentence.id) {
+    cleanupAudio()
+    return
+  }
+
+  cleanupAudio()
+  loadingAudioId.value = sentence.id
+
+  try {
+    const blob = await getTeacherEvaluationAudio(sentence.id)
+    const url = URL.createObjectURL(blob)
+    const audio = new Audio(url)
+    audio.volume = audioVolume.value
+    currentAudio.value = audio
+    currentAudioUrl.value = url
+    playingAudioId.value = sentence.id
+    audio.onloadedmetadata = () => {
+      audioDuration.value = Number.isFinite(audio.duration) ? audio.duration : 0
+    }
+    audio.ontimeupdate = () => {
+      audioCurrentTime.value = audio.currentTime
+      audioDuration.value = Number.isFinite(audio.duration) ? audio.duration : audioDuration.value
+    }
+    audio.onended = cleanupAudio
+    audio.onerror = () => {
+      cleanupAudio()
+      toast.push('录音播放失败', 'error')
+    }
+    await audio.play()
+  } catch (err: any) {
+    cleanupAudio()
+    toast.push(err?.message ?? '获取录音失败', 'error')
+  } finally {
+    if (loadingAudioId.value === sentence.id) loadingAudioId.value = null
+  }
+}
 
 const updateQuery = () => {
   void router.replace({
@@ -188,10 +268,12 @@ const mapRecords = (rows: TeacherTaskRecordStudent[]) => {
 }
 
 const mapDetails = (details: StudentSessionEvaluationItem[]) => {
+  cleanupAudio()
   sentences.value = details.map((item) => ({
     id: item.eval_id,
+    audioFileId: item.audio_file_id ?? null,
     text: item.sentence_text,
-    score: Math.max(1, Math.round(item.total_score / 20)),
+    score: Math.round(item.total_score),
     teacherComment: item.teacher_notes ?? '',
   }))
   overallComment.value = ''
@@ -227,6 +309,7 @@ const load = async () => {
 }
 
 const selectTask = async (taskId: number) => {
+  cleanupAudio()
   selectedTaskId.value = String(taskId)
   selectedClassId.value = ''
   selectedSessionId.value = ''
@@ -238,6 +321,7 @@ const selectTask = async (taskId: number) => {
 }
 
 const selectClass = async (classId: string) => {
+  cleanupAudio()
   selectedClassId.value = classId
   selectedSessionId.value = ''
   selectedUserId.value = ''
@@ -247,6 +331,7 @@ const selectClass = async (classId: string) => {
 }
 
 const selectSession = (session: SessionChoice) => {
+  cleanupAudio()
   selectedSessionId.value = session.sessionId
   selectedUserId.value = String(session.userId)
 }
@@ -278,6 +363,8 @@ watch(selectedSessionId, async () => {
 onMounted(() => {
   void load()
 })
+
+onBeforeUnmount(cleanupAudio)
 </script>
 
 <template>
@@ -466,22 +553,25 @@ onMounted(() => {
                 </p>
               </button>
 
-              <button
+              <div
                 v-for="(sentence, idx) in sentences"
                 :key="sentence.id"
-                type="button"
+                role="button"
+                tabindex="0"
                 :class="[
-                  'w-full text-left px-4 py-3 border-b border-[#F8FAFC] transition-colors',
+                  'w-full text-left px-4 py-3 border-b border-[#F8FAFC] transition-colors cursor-pointer',
                   idx === activeSentenceIdx
                     ? 'bg-[#F2F5E8] border-l-2 border-l-[#356B00]'
                     : 'hover:bg-[#F8FAFC]',
                 ]"
                 @click="activeSentenceIdx = idx"
+                @keydown.enter="activeSentenceIdx = idx"
+                @keydown.space.prevent="activeSentenceIdx = idx"
               >
                 <span class="text-xs font-bold text-[#64748B]">句子 {{ idx + 1 }}</span>
                 <p class="text-sm font-bold text-[#1F2937] mt-1 line-clamp-2">{{ sentence.text }}</p>
-                <span class="text-xs font-black text-[#356B00]">{{ sentence.score }}分</span>
-              </button>
+                <span class="mt-2 block text-xs font-black text-[#356B00]">{{ sentence.score }}分</span>
+              </div>
             </div>
           </div>
 
@@ -521,27 +611,68 @@ onMounted(() => {
             </div>
 
             <div v-else-if="activeSentence" class="flex flex-col gap-6">
-              <div class="bg-[#F8FAFC] rounded-xl p-4">
-                <p class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider mb-2">原文</p>
-                <p class="text-base font-bold text-[#1F2937]">{{ activeSentence.text }}</p>
+              <div class="flex items-stretch gap-3">
+                <div class="min-w-0 flex-1 bg-[#F8FAFC] rounded-xl p-4">
+                  <p class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider mb-2">原文</p>
+                  <p class="text-base font-bold text-[#1F2937] leading-relaxed">{{ activeSentence.text }}</p>
+                </div>
+                <div class="relative flex w-[112px] shrink-0 flex-col justify-end">
+                  <div
+                    v-if="loadingAudioId === activeSentence.id || playingAudioId === activeSentence.id"
+                    class="absolute bottom-[calc(100%+10px)] right-0 w-[220px] rounded-xl border border-[#E2E8F0] bg-white p-3 shadow-[0px_16px_35px_rgba(15,23,42,0.14)]"
+                  >
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-xs font-black text-[#1F2937]">录音播放</span>
+                      <span class="text-xs font-black text-[#64748B]">
+                        {{ formatAudioTime(audioCurrentTime) }} / {{ formatAudioTime(audioDuration) }}
+                      </span>
+                    </div>
+                    <div class="mt-3 h-2 rounded-full bg-[#E2E8F0] overflow-hidden">
+                      <div
+                        class="h-full rounded-full bg-[#58CC02] transition-[width] duration-150"
+                        :style="{ width: `${audioProgress}%` }"
+                      ></div>
+                    </div>
+                    <div class="mt-3 flex items-center gap-3">
+                      <span class="w-10 text-xs font-black text-[#64748B]">音量</span>
+                      <input
+                        v-model.number="audioVolume"
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        class="h-2 min-w-0 flex-1 accent-[#58CC02]"
+                        @input="updateAudioVolume"
+                      />
+                      <span class="w-9 text-right text-xs font-black text-[#64748B]">{{ Math.round(audioVolume * 100) }}%</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="inline-flex min-h-[96px] w-full flex-col items-center justify-center gap-2 rounded-xl border border-[#E2E8F0] bg-white px-4 py-3 text-sm font-black text-[#356B00] shadow-sm hover:bg-[#F2F5E8] disabled:opacity-60"
+                    :disabled="loadingAudioId === activeSentence.id"
+                    @click="playEvaluationAudio(activeSentence)"
+                  >
+                    <Square v-if="playingAudioId === activeSentence.id" class="h-5 w-5" />
+                    <PlayCircle v-else class="h-5 w-5" />
+                    {{ loadingAudioId === activeSentence.id ? '加载中' : playingAudioId === activeSentence.id ? '停止' : '听录音' }}
+                  </button>
+                </div>
               </div>
 
               <div class="flex flex-col gap-3">
-                <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">评分</span>
-                <div class="flex items-center gap-2">
-                  <button
-                    v-for="score in [1, 2, 3, 4, 5]"
-                    :key="score"
-                    type="button"
-                    :class="[
-                      'w-10 h-10 rounded-lg text-sm font-black transition-colors',
-                      score <= activeSentence.score
-                        ? 'bg-[#356B00] text-white'
-                        : 'bg-[#F1F5F9] text-[#9CA3AF]',
-                    ]"
-                  >
-                    {{ score }}
-                  </button>
+                <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">机器评分</span>
+                <div class="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4">
+                  <div class="flex items-end gap-2">
+                    <span class="text-4xl font-black text-[#356B00]">{{ activeSentence.score }}</span>
+                    <span class="pb-1 text-sm font-black text-[#64748B]">/ 100 分</span>
+                  </div>
+                  <div class="mt-3 h-2 rounded-full bg-[#E2E8F0] overflow-hidden">
+                    <div
+                      class="h-full rounded-full bg-[#58CC02]"
+                      :style="{ width: `${Math.min(Math.max(activeSentence.score, 0), 100)}%` }"
+                    ></div>
+                  </div>
                 </div>
               </div>
 

@@ -6,8 +6,10 @@ import {
   analyzeStudentPronTest,
   createStudentTestSession,
   getStudentTaskDetail,
+  getStudentTaskRecords,
   submitStudentTestSession,
   type CreateStudentTestSessionResponse,
+  type StudentTaskRecordItem,
   type StudentTaskDetail,
   type SubmitStudentTestSessionResponse,
 } from '../../api/endpoints'
@@ -15,6 +17,11 @@ import ErrorState from '../../components/ErrorState.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 import { useAsync } from '../../composables/useAsync'
 import { useToast } from '../../composables/useToast'
+import {
+  getStudentTaskAvailability,
+  studentTaskAvailabilityMessages,
+  type StudentTaskAvailabilityStatus,
+} from '../../utils/studentTaskAvailability'
 
 type SentenceStatus = 'pending' | 'recording' | 'analyzing' | 'done' | 'error'
 
@@ -30,6 +37,7 @@ const router = useRouter()
 const toast = useToast()
 
 const taskReq = useAsync<{ ok: boolean; data: StudentTaskDetail }>()
+const recordsReq = useAsync<{ tasks: StudentTaskRecordItem[] }>()
 const createReq = useAsync<CreateStudentTestSessionResponse>()
 const submitReq = useAsync<SubmitStudentTestSessionResponse>()
 
@@ -51,6 +59,7 @@ const routeValue = (value: unknown) => {
 
 const taskId = computed(() => routeValue(route.params.taskId) || routeValue(route.query.taskId))
 const taskDetail = computed(() => taskReq.data.value?.data ?? null)
+const records = computed(() => recordsReq.data.value?.tasks ?? [])
 const segments = computed(() => taskDetail.value?.segments ?? [])
 const sentencePageSize = 4
 const currentSentence = computed(() => segments.value[activeIndex.value] ?? '')
@@ -70,16 +79,16 @@ const progressPercent = computed(() => {
 })
 const progressStyle = computed(() => ({ width: `${progressPercent.value}%` }))
 const allSentencesCompleted = computed(() => segments.value.length > 0 && completedCount.value === segments.value.length)
-const taskWindowStatus = computed<'inactive' | 'not_started' | 'ended' | 'open'>(() => {
+const taskWindowStatus = computed<StudentTaskAvailabilityStatus>(() => {
   const task = taskDetail.value
-  if (!task?.is_active) return 'inactive'
-
-  const now = Date.now()
-  const start = task.available_from ? new Date(task.available_from).getTime() : Number.NaN
-  const end = task.available_until ? new Date(task.available_until).getTime() : Number.NaN
-  if (Number.isFinite(start) && now < start) return 'not_started'
-  if (Number.isFinite(end) && now > end) return 'ended'
-  return 'open'
+  if (!task) return 'inactive'
+  return getStudentTaskAvailability({
+    isActive: task.is_active,
+    availableFrom: task.available_from,
+    availableUntil: task.available_until,
+    maxAttempts: task.max_attempt,
+    attemptCount: records.value.length,
+  })
 })
 const taskWindowOpen = computed(() => taskWindowStatus.value === 'open')
 const taskWindowLabel = computed(() => {
@@ -87,16 +96,14 @@ const taskWindowLabel = computed(() => {
     inactive: '未开放',
     not_started: '未开始',
     ended: '已结束',
+    attempts_exhausted: '次数已用完',
     open: '可测试',
   }
   return labels[taskWindowStatus.value]
 })
 const taskWindowClass = computed(() => (taskWindowOpen.value ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-500'))
 const taskWindowMessage = computed(() => {
-  if (taskWindowStatus.value === 'ended') return '任务已结束，无法继续录音测评。'
-  if (taskWindowStatus.value === 'not_started') return '任务尚未开始，请在开放时间后再进行测试。'
-  if (taskWindowStatus.value === 'inactive') return '任务尚未开放，暂时无法测试。'
-  return ''
+  return studentTaskAvailabilityMessages[taskWindowStatus.value]
 })
 const canRecord = computed(() => taskWindowOpen.value && !!currentSentence.value && !recording.value && !analyzing.value && !submitReq.loading.value)
 const canSubmit = computed(() => !!sessionId.value && taskWindowOpen.value && allSentencesCompleted.value && !recording.value && !analyzing.value && !submitReq.loading.value)
@@ -166,7 +173,10 @@ const stopStream = () => {
 
 const loadTask = async () => {
   if (!taskId.value) return
-  await taskReq.run(() => getStudentTaskDetail(taskId.value))
+  await Promise.all([
+    taskReq.run(() => getStudentTaskDetail(taskId.value)),
+    recordsReq.run(() => getStudentTaskRecords(taskId.value)),
+  ])
 }
 
 const ensureSession = async () => {
@@ -246,6 +256,11 @@ const startRecording = async () => {
       toast.push(taskWindowMessage.value || message, 'error')
       return
     }
+    if (message === 'Maximum attempts reached') {
+      await recordsReq.run(() => getStudentTaskRecords(taskId.value))
+      toast.push(studentTaskAvailabilityMessages.attempts_exhausted, 'error')
+      return
+    }
     setCurrentResult({ status: 'error', error: message })
     toast.push(message, 'error')
   }
@@ -295,6 +310,7 @@ const submitSession = async () => {
   try {
     const res = await submitReq.run(() => submitStudentTestSession(taskId.value))
     submitResult.value = res
+    await recordsReq.run(() => getStudentTaskRecords(taskId.value))
     toast.push('测试已提交', 'success')
   } catch (error) {
     const message = error instanceof Error ? error.message : '提交失败，请稍后重试'

@@ -1,4 +1,4 @@
-import { request } from './http'
+import { request, requestBlob } from './http'
 
 export type LoginForm = {
   institute: string
@@ -82,6 +82,7 @@ export type StudentTaskItem = {
   available_until?: string | null
   avg_score: number
   is_active: boolean
+  attempt_count?: number
 }
 
 export async function getStudentTasks(classId?: string | null) {
@@ -137,6 +138,7 @@ export async function getStudentTaskRecords(taskId: string | number) {
 
 export type StudentSessionEvaluationItem = {
   eval_id: string
+  audio_file_id?: string | null
   line_number: number
   sentence_text: string
   pronunciation: number
@@ -498,6 +500,13 @@ export async function getTeacherSessionDetails(userId: string | number, sessionI
   return request<StudentSessionEvaluationItem[]>('teacher/get_session', {
     method: 'POST',
     query: { user_id: userId, session_id: sessionId },
+  })
+}
+
+export async function getTeacherEvaluationAudio(evaluationId: string) {
+  return requestBlob('teacher/evaluation/audio', {
+    method: 'GET',
+    query: { evaluation_id: evaluationId },
   })
 }
 

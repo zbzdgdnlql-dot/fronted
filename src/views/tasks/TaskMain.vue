@@ -2,6 +2,11 @@
 import { Mic, BookA, Headphones, PenLine, ChevronRight, CheckCircle2, PlayCircle } from 'lucide-vue-next'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 import type { StudentSessionEvaluationItem, StudentTaskDetail, StudentTaskRecordItem } from '../../api/endpoints'
+import {
+  getStudentTaskAvailability,
+  studentTaskAvailabilityLabels,
+  studentTaskStartButtonLabels,
+} from '../../utils/studentTaskAvailability'
 
 const props = defineProps<{
   loading: boolean
@@ -44,27 +49,16 @@ const formatDate = (value: string | null) => {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
-type TaskWindowStatus = 'inactive' | 'not_started' | 'ended' | 'open'
-
-const taskWindowStatus = (task: StudentTaskDetail): TaskWindowStatus => {
-  if (!task.is_active) return 'inactive'
-
-  const now = Date.now()
-  const start = task.available_from ? new Date(task.available_from).getTime() : Number.NaN
-  const end = task.available_until ? new Date(task.available_until).getTime() : Number.NaN
-  if (Number.isFinite(start) && now < start) return 'not_started'
-  if (Number.isFinite(end) && now > end) return 'ended'
-  return 'open'
-}
+const taskWindowStatus = (task: StudentTaskDetail) => getStudentTaskAvailability({
+  isActive: task.is_active,
+  availableFrom: task.available_from,
+  availableUntil: task.available_until,
+  maxAttempts: task.max_attempt,
+  attemptCount: props.records.length,
+})
 
 const taskStatusLabel = (task: StudentTaskDetail) => {
-  const labels: Record<TaskWindowStatus, string> = {
-    inactive: '未启用',
-    not_started: '未开始',
-    ended: '已结束',
-    open: '进行中',
-  }
-  return labels[taskWindowStatus(task)]
+  return studentTaskAvailabilityLabels[taskWindowStatus(task)]
 }
 
 const taskStatusClass = (task: StudentTaskDetail) => {
@@ -74,14 +68,12 @@ const taskStatusClass = (task: StudentTaskDetail) => {
 const canStartTask = (task: StudentTaskDetail) => taskWindowStatus(task) === 'open'
 
 const startButtonText = (task: StudentTaskDetail) => {
-  const labels: Record<TaskWindowStatus, string> = {
-    inactive: '暂未开放',
-    not_started: '暂未开始',
-    ended: '已结束',
-    open: '进入测试',
-  }
-  return labels[taskWindowStatus(task)]
+  return studentTaskStartButtonLabels[taskWindowStatus(task)]
 }
+
+const attemptCount = () => props.records.length
+const completionLabel = () => attemptCount() >= 1 ? 'completed' : 'uncompleted'
+const completionClass = () => attemptCount() >= 1 ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'
 </script>
 
 <template>
@@ -116,6 +108,12 @@ const startButtonText = (task: StudentTaskDetail) => {
               >
                 {{ taskStatusLabel(props.taskDetail) }}
               </span>
+              <span
+                class="rounded-full px-3 py-1 text-xs font-black"
+                :class="completionClass()"
+              >
+                {{ completionLabel() }}
+              </span>
             </div>
             <h3 class="text-xl font-black text-gray-900">{{ props.taskDetail.title }}</h3>
             <p v-if="props.taskDetail.notes" class="text-sm font-bold text-gray-500">{{ props.taskDetail.notes }}</p>
@@ -125,6 +123,10 @@ const startButtonText = (task: StudentTaskDetail) => {
             <div class="rounded-2xl bg-white border border-gray-100 px-4 py-3 flex items-center justify-between gap-4">
               <span class="text-xs font-black text-gray-400">最多提交</span>
               <span class="text-lg font-black text-gray-900">{{ props.taskDetail.max_attempt ?? '--' }} 次</span>
+            </div>
+            <div class="rounded-2xl bg-white border border-gray-100 px-4 py-3 flex items-center justify-between gap-4">
+              <span class="text-xs font-black text-gray-400">已尝试</span>
+              <span class="text-lg font-black text-gray-900">{{ attemptCount() }} 次</span>
             </div>
             <button
               v-if="canStartTask(props.taskDetail)"

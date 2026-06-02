@@ -9,10 +9,11 @@ vi.mock('../http', () => {
       if (path === 'teacher/task/auto_segment') return { segments: ['hello'] }
       return {}
     }),
+    requestBlob: vi.fn(async () => new Blob(['audio'])),
   }
 })
 
-import { request } from '../http'
+import { request, requestBlob } from '../http'
 import {
   login,
   logout,
@@ -33,6 +34,7 @@ import {
   getTeacherClassStudents,
   getTeacherClassContents,
   getTeacherTaskRecords,
+  getTeacherEvaluationAudio,
   getTeacherStudentBasicInformation,
   getTeacherStudentRecords,
   getTeacherTaskBasicInformation,
@@ -203,6 +205,14 @@ describe('api/endpoints', () => {
     expect(request).toHaveBeenCalledWith(
       'teacher/task/records',
       expect.objectContaining({ method: 'POST', body: { class_id: 'c1', task_id: 1 } }),
+    )
+  })
+
+  it('teacher evaluation audio uses GET teacher/evaluation/audio with evaluation_id', async () => {
+    await getTeacherEvaluationAudio('e1')
+    expect(requestBlob).toHaveBeenCalledWith(
+      'teacher/evaluation/audio',
+      expect.objectContaining({ method: 'GET', query: { evaluation_id: 'e1' } }),
     )
   })
 

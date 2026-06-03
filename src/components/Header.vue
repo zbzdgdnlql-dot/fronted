@@ -4,13 +4,12 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { useAuth } from '../stores/auth'
 import { logout as apiLogout } from '../api/endpoints'
 import { useToast } from '../composables/useToast'
-import { useCurrentUserSummary } from '../composables/useCurrentUserSummary'
+import UserAccountMenu from './UserAccountMenu.vue'
 import router from '../router'
 
 const route = useRoute()
 const auth = useAuth()
 const toast = useToast()
-const currentUser = useCurrentUserSummary()
 const classMenuOpen = ref(false)
 
 const studentLinks = [
@@ -130,16 +129,7 @@ onBeforeUnmount(() => {
         退出
       </button>
 
-      <div class="hidden sm:flex items-center gap-3 rounded-2xl border border-gray-100 bg-[#F8F9FA] px-3 py-2">
-        <span class="max-w-32 truncate text-sm font-black text-gray-700">{{ currentUser.displayName.value }}</span>
-        <div class="w-9 h-9 rounded-full border-2 border-[#70C125] p-0.5 overflow-hidden flex items-center justify-center bg-blue-50 shrink-0">
-          <img :src="currentUser.avatarSrc.value" alt="Avatar" class="w-full h-full object-cover rounded-full" />
-        </div>
-      </div>
-
-      <div class="sm:hidden w-10 h-10 rounded-full border-2 border-[#70C125] p-0.5 overflow-hidden flex items-center justify-center bg-blue-50">
-        <img :src="currentUser.avatarSrc.value" alt="Avatar" class="w-full h-full object-cover rounded-full" />
-      </div>
+      <UserAccountMenu />
     </div>
   </header>
 </template>

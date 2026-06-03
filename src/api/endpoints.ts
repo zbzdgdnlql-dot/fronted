@@ -10,6 +10,7 @@ export type LoginForm = {
 export type LoginResponse = {
   access_token: string
   token_type: string
+  must_change_password: boolean
   user: {
     user_id: string
     user_type: string
@@ -22,6 +23,30 @@ export async function login(form: LoginForm) {
 
 export async function logout() {
   return request<unknown>('auth/logout', { method: 'POST' })
+}
+
+export type EditPasswordPayload = {
+  oldPassword?: string
+  password: string
+}
+
+export type EditPasswordResponse = {
+  ok: boolean
+  access_token: string
+  token_type: string
+  must_change_password: boolean
+}
+
+export async function editUserPassword(payload: EditPasswordPayload) {
+  const body: { old_password?: string; password: string } = {
+    password: payload.password,
+  }
+  if (payload.oldPassword !== undefined) body.old_password = payload.oldPassword
+
+  return request<EditPasswordResponse>('auth/users/edit_password', {
+    method: 'PUT',
+    body,
+  })
 }
 
 export type InstituteItem = {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { useCurrentUserSummary } from '../../composables/useCurrentUserSummary'
+import UserAccountMenu from '../UserAccountMenu.vue'
 
 defineProps<{
   title?: string
@@ -12,7 +12,6 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
-const currentUser = useCurrentUserSummary()
 
 const onBack = () => {
   emit('back')
@@ -55,12 +54,7 @@ const onBack = () => {
       <span class="whitespace-nowrap text-xs font-black text-[#FBFBFA] bg-[rgba(77,124,15,0.65)] rounded-full px-2.5 py-1 leading-none tracking-wider">
         教师端
       </span>
-      <div class="flex items-center gap-3 rounded-2xl border border-[#E2E8F0] bg-white px-3 py-2 shadow-sm min-w-0">
-        <span class="max-w-36 truncate text-sm font-black text-[#334155]">{{ currentUser.displayName.value }}</span>
-        <div class="w-9 h-9 rounded-full border-2 border-[#58CC02] bg-[#EAF0DD] overflow-hidden shrink-0">
-          <img :src="currentUser.avatarSrc.value" alt="Avatar" class="w-full h-full object-cover rounded-full" />
-        </div>
-      </div>
+      <UserAccountMenu compact />
     </div>
   </header>
 </template>

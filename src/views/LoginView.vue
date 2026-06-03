@@ -97,6 +97,13 @@ const submit = async () => {
     const session = {
       user_id: res.user.user_id,
       user_type: res.user.user_type.toLowerCase(),
+      must_change_password: res.must_change_password,
+    }
+    if (res.must_change_password) {
+      auth.setSession(session)
+      toast.push('首次登录请先修改密码', 'warning')
+      await router.replace({ path: '/change-password', query: { redirect: (route.query.redirect as string | undefined) ?? '/' } })
+      return
     }
     if (session.user_type === 'student') {
       const basic = await getStudentBasicInformation()

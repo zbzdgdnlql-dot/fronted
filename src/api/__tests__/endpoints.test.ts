@@ -17,6 +17,7 @@ import { request, requestBlob } from '../http'
 import {
   login,
   logout,
+  editUserPassword,
   getInstitutes,
   searchInstitutes,
   getStudentBasicInformation,
@@ -59,6 +60,22 @@ describe('api/endpoints', () => {
   it('logout uses POST auth/logout', async () => {
     await logout()
     expect(request).toHaveBeenCalledWith('auth/logout', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('edit user password uses PUT auth/users/edit_password', async () => {
+    await editUserPassword({ oldPassword: 'old123', password: 'new123' })
+    expect(request).toHaveBeenCalledWith(
+      'auth/users/edit_password',
+      expect.objectContaining({ method: 'PUT', body: { old_password: 'old123', password: 'new123' } }),
+    )
+  })
+
+  it('edit user password can omit old password for forced first login change', async () => {
+    await editUserPassword({ password: 'new123' })
+    expect(request).toHaveBeenCalledWith(
+      'auth/users/edit_password',
+      expect.objectContaining({ method: 'PUT', body: { password: 'new123' } }),
+    )
   })
 
   it('get institutes uses GET auth/institute/all', async () => {

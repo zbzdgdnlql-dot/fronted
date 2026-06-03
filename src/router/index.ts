@@ -22,6 +22,16 @@ function getUserType(): string {
   }
 }
 
+function mustChangePassword(): boolean {
+  try {
+    const raw = localStorage.getItem('session')
+    if (!raw) return false
+    return !!(JSON.parse(raw) as { must_change_password?: boolean }).must_change_password
+  } catch {
+    return false
+  }
+}
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -30,6 +40,12 @@ const router = createRouter({
       name: 'login',
       meta: { public: true, layout: 'bare' },
       component: () => import('../views/LoginView.vue'),
+    },
+    {
+      path: '/change-password',
+      name: 'change-password',
+      meta: { layout: 'bare' },
+      component: () => import('../views/ChangePasswordView.vue'),
     },
     {
       path: '/',
@@ -120,6 +136,12 @@ router.beforeEach((to) => {
   const isPublic = !!to.meta?.public
   if (isPublic) return true
   if (hasSession()) {
+    if (mustChangePassword() && to.path !== '/change-password') {
+      return { path: '/change-password', query: { redirect: to.fullPath } }
+    }
+    if (!mustChangePassword() && to.path === '/change-password') {
+      return { path: getUserType() === 'teacher' ? '/teacher/overview' : '/' }
+    }
     if (to.path === '/') {
       const userType = getUserType()
       if (userType === 'teacher') return { path: '/teacher/overview' }

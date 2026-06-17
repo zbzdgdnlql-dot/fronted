@@ -120,7 +120,7 @@ const loadSessionDetails = async (sessionId = selectedSessionId.value) => {
   }
 }
 
-const startTest = async (taskId: number) => {
+const startTest = async (taskId: string) => {
   await router.push({ name: 'task-test', params: { taskId: String(taskId) } })
 }
 
@@ -167,6 +167,7 @@ watch(currentClassId, async () => {
         v-else
         :loading="recordsReq.loading.value"
         :task-detail="selectedTaskDetail"
+        :selected-task-id="selectedTaskId"
         :task-detail-loading="taskDetailReq.loading.value"
         :task-detail-error="taskDetailReq.error.value"
         :records="records"

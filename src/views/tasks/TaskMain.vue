@@ -11,6 +11,7 @@ import {
 const props = defineProps<{
   loading: boolean
   taskDetail: StudentTaskDetail | null
+  selectedTaskId: string | null
   taskDetailLoading: boolean
   taskDetailError: string | null
   records: StudentTaskRecordItem[]
@@ -22,7 +23,7 @@ const props = defineProps<{
 
 defineEmits<{
   (e: 'selectRecord', sessionId: string): void
-  (e: 'startTest', taskId: number): void
+  (e: 'startTest', taskId: string): void
 }>()
 
 const iconFor = (i: number) => {
@@ -132,7 +133,7 @@ const completionClass = () => attemptCount() >= 1 ? 'bg-blue-50 text-blue-600' :
               v-if="canStartTask(props.taskDetail)"
               type="button"
               class="rounded-2xl bg-[#70C125] px-5 py-3 text-sm font-black text-white flex items-center justify-center gap-2 border-b-4 border-[#5E9E1A] hover:bg-[#63ad20] active:border-b-0 active:translate-y-1 transition-all"
-              @click="$emit('startTest', props.taskDetail.task_id)"
+              @click="$emit('startTest', props.selectedTaskId ?? String(props.taskDetail.task_id))"
             >
               <PlayCircle class="w-5 h-5" />
               进入测试

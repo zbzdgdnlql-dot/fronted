@@ -44,8 +44,7 @@ const buildStudentSession = async (baseSession: Session) => {
     class_name: item.class_name,
     teacher_name: Array.isArray(item.teacher_name) ? item.teacher_name.join('、') : item.teacher_name,
   }))
-  const firstClass = baseSession.class_context
-    ?? classContexts.find((item) => item.class_id === baseSession.class_context?.class_id)
+  const firstClass = classContexts.find((item) => item.class_id === baseSession.class_context?.class_id)
     ?? classContexts[0]
 
   return {

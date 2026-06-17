@@ -22,10 +22,12 @@ import {
   searchInstitutes,
   getStudentBasicInformation,
   analyzeStudentPronTest,
+  createStudentTestSession,
   getStudentTaskDetail,
   getStudentSessionDetails,
   getStudentTasks,
   getStudentTaskRecords,
+  submitStudentTestSession,
   getStudentArchiveStatistics,
   getStudentHistoryWords,
   getUserDetail,
@@ -149,6 +151,20 @@ describe('api/endpoints', () => {
     expect(call).toBeTruthy()
     expect(call[1]).toEqual(expect.objectContaining({ method: 'POST' }))
     expect(call[1].body).toBeInstanceOf(FormData)
+  })
+
+  it('student test session APIs keep task_id as provided', async () => {
+    await createStudentTestSession('task-2026-c')
+    await submitStudentTestSession('task-2026-c')
+
+    expect(request).toHaveBeenCalledWith(
+      'student/test/create_session',
+      expect.objectContaining({ method: 'POST', body: { task_id: 'task-2026-c' } }),
+    )
+    expect(request).toHaveBeenCalledWith(
+      'student/test/submit_session',
+      expect.objectContaining({ method: 'POST', body: { task_id: 'task-2026-c' } }),
+    )
   })
 
   it('teacher basic information uses GET teacher/basic_information', async () => {

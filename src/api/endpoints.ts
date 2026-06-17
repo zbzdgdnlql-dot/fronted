@@ -239,7 +239,7 @@ export type CreateStudentTestSessionResponse = {
 export async function createStudentTestSession(taskId: string | number) {
   return request<CreateStudentTestSessionResponse>('student/test/create_session', {
     method: 'POST',
-    body: { task_id: Number(taskId) },
+    body: { task_id: taskId },
   })
 }
 
@@ -254,7 +254,7 @@ export type SubmitStudentTestSessionResponse = {
 export async function submitStudentTestSession(taskId: string | number) {
   return request<SubmitStudentTestSessionResponse>('student/test/submit_session', {
     method: 'POST',
-    body: { task_id: Number(taskId) },
+    body: { task_id: taskId },
   })
 }
 

@@ -23,6 +23,6 @@ import SkeletonBlock from '../../components/SkeletonBlock.vue'
         <SkeletonBlock class="h-12 w-full" />
       </section>
     </div>
-    <!-- TODO: 将 /student/pron-test/analyze 与 /student/test/submit_session 返回结果展示为总分与逐句详情。 -->
+    <!-- TODO: 将 /student/pron-test/analyze 与 /student/pron-test/submit_session 返回结果展示为总分与逐句详情。 -->
   </main>
 </template>

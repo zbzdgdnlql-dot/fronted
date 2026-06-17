@@ -27,7 +27,7 @@
 - `GET student/session?session_id=...`：session 逐句明细
 - `GET student/archive/statistics`：学生档案统计
 - `GET student/history/words`：历史单词集合
-- `POST student/test/create_session`、`POST student/pron-test/analyze`、`POST student/test/submit_session`：学生朗读评测流程
+- `POST student/pron-test/create_session`、`POST student/pron-test/analyze`、`POST student/pron-test/submit_session`：学生朗读评测流程
 
 ### 教师端
 - `GET teacher/basic_information`：教师概览统计

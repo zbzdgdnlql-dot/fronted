@@ -158,11 +158,11 @@ describe('api/endpoints', () => {
     await submitStudentTestSession('task-2026-c')
 
     expect(request).toHaveBeenCalledWith(
-      'student/test/create_session',
+      'student/pron-test/create_session',
       expect.objectContaining({ method: 'POST', body: { task_id: 'task-2026-c' } }),
     )
     expect(request).toHaveBeenCalledWith(
-      'student/test/submit_session',
+      'student/pron-test/submit_session',
       expect.objectContaining({ method: 'POST', body: { task_id: 'task-2026-c' } }),
     )
   })

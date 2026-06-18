@@ -32,6 +32,32 @@ describe('api/http', () => {
     expect(res.ok).toBe(true)
   })
 
+  it('prefixes requests with relative api base URL', async () => {
+    const mockFetch = vi.fn(async () => {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    globalThis.fetch = mockFetch as any
+
+    configureApiClient({
+      baseUrl: '/api/',
+      timeoutMs: 10_000,
+      getToken: () => null,
+    })
+
+    await request('student/pron-test/create_session', {
+      method: 'POST',
+      body: { task_id: 'task-1' },
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/student/pron-test/create_session'),
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
   it('throws ApiError and triggers onUnauthorized on 401', async () => {
     const mockFetch = vi.fn(async () => {
       return new Response(JSON.stringify({ message: '未授权' }), {
@@ -69,4 +95,3 @@ describe('api/http', () => {
     await expect(request('/oops')).rejects.toMatchObject({ status: 500 })
   })
 })
-

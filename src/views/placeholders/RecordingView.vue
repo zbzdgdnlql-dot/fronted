@@ -284,7 +284,7 @@ const analyzeCurrentSentence = async (audio: Blob) => {
       refText: currentSentence.value,
       taskId: taskId.value,
       sentenceSeq: activeIndex.value,
-      lang: taskDetail.value?.language_type ?? 'fr',
+      lang: 'fr',
     })
 
     setCurrentResult({

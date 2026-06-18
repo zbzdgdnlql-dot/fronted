@@ -9,8 +9,9 @@
 
 ## 环境变量
 
-- `VITE_API_BASE_URL`：后端 API 基地址（例如 `http://localhost:5000`）
-  - 未设置时默认走本地后端：`http://127.0.0.1:8000`
+- `VITE_API_BASE_URL`：后端 API 基地址（例如 `http://localhost:5000` 或 `/api`）
+  - 未设置时默认走同域 Nginx 代理前缀：`/api`
+  - Nginx 可将 `/api/*` 转发到后端并去掉 `/api` 前缀
   - 请求默认使用 bearer token，不跨域携带 cookie
 
 ## 已接入接口清单

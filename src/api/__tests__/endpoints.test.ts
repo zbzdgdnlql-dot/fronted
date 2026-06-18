@@ -151,6 +151,12 @@ describe('api/endpoints', () => {
     expect(call).toBeTruthy()
     expect(call[1]).toEqual(expect.objectContaining({ method: 'POST' }))
     expect(call[1].body).toBeInstanceOf(FormData)
+    expect(call[1].body.get('audio')).toBeInstanceOf(Blob)
+    expect(call[1].body.get('ref_text')).toBe('Bonjour')
+    expect(call[1].body.get('task_id')).toBe('1001')
+    expect(call[1].body.get('sentence_seq')).toBe('2')
+    expect(call[1].body.get('lang')).toBe('fr')
+    expect(call[1].body.get('core')).toBe('sent')
   })
 
   it('student test session APIs keep task_id as provided', async () => {

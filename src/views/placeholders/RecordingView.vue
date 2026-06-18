@@ -51,6 +51,12 @@ const submitResult = ref<SubmitStudentTestSessionResponse | null>(null)
 const recorder = shallowRef<MediaRecorder | null>(null)
 const stream = shallowRef<MediaStream | null>(null)
 let recordedChunks: Blob[] = []
+let recordingTimer: number | null = null
+let discardRecordingOnStop = false
+
+const MIN_RECORDING_MS = 1500
+const MIN_AUDIO_BLOB_BYTES = 4096
+const MEDIA_RECORDER_TIMESLICE_MS = 250
 
 const routeValue = (value: unknown) => {
   if (Array.isArray(value)) return value[0] ?? ''
@@ -106,6 +112,14 @@ const taskWindowMessage = computed(() => {
   return studentTaskAvailabilityMessages[taskWindowStatus.value]
 })
 const canRecord = computed(() => taskWindowOpen.value && !!currentSentence.value && !recording.value && !analyzing.value && !submitReq.loading.value)
+const recordingStartedAt = ref<number | null>(null)
+const recordingElapsedMs = ref(0)
+const canStopRecording = computed(() => recording.value && recordingElapsedMs.value >= MIN_RECORDING_MS)
+const stopRecordingLabel = computed(() => {
+  if (!recording.value || canStopRecording.value) return '停止录音'
+  const remainingMs = Math.max(0, MIN_RECORDING_MS - recordingElapsedMs.value)
+  return `至少录制 ${(remainingMs / 1000).toFixed(1)} 秒`
+})
 const canSubmit = computed(() => !!sessionId.value && taskWindowOpen.value && allSentencesCompleted.value && !recording.value && !analyzing.value && !submitReq.loading.value)
 const averageScore = computed(() => {
   const scores = results.value
@@ -171,6 +185,29 @@ const stopStream = () => {
   stream.value = null
 }
 
+const clearRecordingTimer = () => {
+  if (recordingTimer !== null) {
+    window.clearInterval(recordingTimer)
+    recordingTimer = null
+  }
+}
+
+const startRecordingTimer = () => {
+  clearRecordingTimer()
+  recordingStartedAt.value = Date.now()
+  recordingElapsedMs.value = 0
+  recordingTimer = window.setInterval(() => {
+    if (recordingStartedAt.value === null) return
+    recordingElapsedMs.value = Date.now() - recordingStartedAt.value
+  }, 100)
+}
+
+const resetRecordingTimer = () => {
+  clearRecordingTimer()
+  recordingStartedAt.value = null
+  recordingElapsedMs.value = 0
+}
+
 const loadTask = async () => {
   if (!taskId.value) return
   await Promise.all([
@@ -222,6 +259,7 @@ const startRecording = async () => {
     submitResult.value = null
     await ensureSession()
     recordedChunks = []
+    discardRecordingOnStop = false
     const nextStream = await navigator.mediaDevices.getUserMedia({ audio: true })
     stream.value = nextStream
     const preferredType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : ''
@@ -232,13 +270,26 @@ const startRecording = async () => {
     }
 
     nextRecorder.onstop = () => {
+      const elapsedMs = recordingStartedAt.value === null ? 0 : Date.now() - recordingStartedAt.value
       const mimeType = recordedChunks[0]?.type || preferredType || 'audio/webm'
       const audio = new Blob(recordedChunks, { type: mimeType })
       recording.value = false
+      resetRecordingTimer()
       stopStream()
+      if (discardRecordingOnStop) return
+      if (elapsedMs < MIN_RECORDING_MS) {
+        setCurrentResult({ status: 'error', error: '录音时间过短，请至少录制 1.5 秒后重试' })
+        toast.push('录音时间过短，请至少录制 1.5 秒后重试', 'error')
+        return
+      }
       if (!audio.size) {
         setCurrentResult({ status: 'error', error: '录音内容为空，请稍微延长朗读时间后重试' })
         toast.push('录音内容为空，请稍微延长朗读时间后重试', 'error')
+        return
+      }
+      if (audio.size < MIN_AUDIO_BLOB_BYTES) {
+        setCurrentResult({ status: 'error', error: '录音数据过短或不完整，请重新录制后再试' })
+        toast.push('录音数据过短或不完整，请重新录制后再试', 'error')
         return
       }
       void analyzeCurrentSentence(audio)
@@ -246,10 +297,12 @@ const startRecording = async () => {
 
     recorder.value = nextRecorder
     setCurrentResult({ status: 'recording', error: null })
-    nextRecorder.start()
+    nextRecorder.start(MEDIA_RECORDER_TIMESLICE_MS)
     recording.value = true
+    startRecordingTimer()
   } catch (error) {
     recording.value = false
+    resetRecordingTimer()
     stopStream()
     const message = error instanceof Error ? error.message : '无法开始录音'
     if (message === 'Task has ended' || message === 'Task has not started' || message === 'Task unavailable') {
@@ -268,6 +321,11 @@ const startRecording = async () => {
 
 const stopRecording = () => {
   if (recorder.value?.state === 'recording') {
+    if (!canStopRecording.value) {
+      toast.push('请至少录制 1.5 秒后再停止', 'warning')
+      return
+    }
+    recorder.value.requestData()
     recorder.value.stop()
   }
 }
@@ -335,7 +393,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  discardRecordingOnStop = true
   if (recorder.value?.state === 'recording') recorder.value.stop()
+  resetRecordingTimer()
   stopStream()
 })
 </script>
@@ -562,11 +622,11 @@ onUnmounted(() => {
             <button
               type="button"
               class="rounded-2xl bg-[#FF80B5] px-6 py-4 text-sm font-black text-white flex items-center gap-2 border-b-4 border-[#D16A95] hover:bg-[#e673a3] active:border-b-0 active:translate-y-1 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-[#FF80B5]"
-              :disabled="!recording"
+              :disabled="!canStopRecording"
               @click="stopRecording"
             >
               <Square class="w-5 h-5" />
-              停止录音
+              {{ stopRecordingLabel }}
             </button>
             <button
               type="button"

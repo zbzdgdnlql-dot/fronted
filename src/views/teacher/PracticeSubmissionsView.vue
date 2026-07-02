@@ -308,7 +308,7 @@ const load = async () => {
   updateQuery()
 }
 
-const selectTask = async (taskId: number) => {
+const selectTask = async (taskId: string) => {
   cleanupAudio()
   selectedTaskId.value = String(taskId)
   selectedClassId.value = ''

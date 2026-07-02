@@ -26,6 +26,7 @@ let instituteSearchTimer: ReturnType<typeof window.setTimeout> | undefined
 let instituteRequestId = 0
 
 const trimmedInstitute = computed(() => institute.value.trim())
+const getInstituteSeq = (item: InstituteItem) => item.school_seq ?? item.school_id
 
 const loadInstitutes = async (keyword = '') => {
   const requestId = ++instituteRequestId
@@ -56,7 +57,7 @@ const closeInstituteMenu = () => {
 }
 
 const selectInstitute = (item: InstituteItem) => {
-  selectedInstituteId.value = item.school_id
+  selectedInstituteId.value = getInstituteSeq(item)
   institute.value = item.school_name
   instituteMenuOpen.value = false
 }
@@ -65,7 +66,7 @@ watch(institute, (value) => {
   instituteFieldError.value = null
 
   if (selectedInstituteId.value) {
-    const selected = instituteOptions.value.find((item) => item.school_id === selectedInstituteId.value)
+    const selected = instituteOptions.value.find((item) => getInstituteSeq(item) === selectedInstituteId.value)
     if (selected?.school_name !== value) selectedInstituteId.value = ''
   }
 
@@ -81,14 +82,15 @@ onMounted(() => {
 })
 
 const submit = async () => {
-  if (!trimmedInstitute.value) {
-    instituteFieldError.value = '请先选择学校'
+  if (!trimmedInstitute.value || !selectedInstituteId.value) {
+    instituteFieldError.value = trimmedInstitute.value ? '请从列表中选择学校' : '请先选择学校'
     return
   }
 
   await req.run(async () => {
     const res = await login({
       institute: trimmedInstitute.value,
+      school_seq: selectedInstituteId.value,
       user_type: userType.value,
       stu_id: username.value.trim(),
       password: password.value,
@@ -169,13 +171,13 @@ const submit = async () => {
             <button
               v-for="item in instituteOptions"
               v-else
-              :key="item.school_id"
+              :key="getInstituteSeq(item)"
               type="button"
               class="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-bold text-gray-700 hover:bg-[#F8F9FA]"
               @mousedown.prevent="selectInstitute(item)"
             >
               <span>{{ item.school_name }}</span>
-              <span v-if="selectedInstituteId === item.school_id" class="text-xs font-black text-[#70C125]">已选</span>
+              <span v-if="selectedInstituteId === getInstituteSeq(item)" class="text-xs font-black text-[#70C125]">已选</span>
             </button>
             <div
               v-if="!instituteLoading && !instituteLoadError && instituteOptions.length === 0"

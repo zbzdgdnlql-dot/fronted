@@ -2,6 +2,7 @@ import { request, requestBlob } from './http'
 
 export type LoginForm = {
   institute: string
+  school_seq: string
   user_type: 'Student' | 'Teacher'
   stu_id: string
   password: string
@@ -50,6 +51,7 @@ export async function editUserPassword(payload: EditPasswordPayload) {
 }
 
 export type InstituteItem = {
+  school_seq?: string
   school_id: string
   school_name: string
 }
@@ -118,7 +120,7 @@ export async function getStudentTasks(classId?: string | null) {
 }
 
 export type StudentTaskDetail = {
-  task_id: number
+  task_id: string
   course: Array<{
     class_id: string
     class_name: string
@@ -140,7 +142,7 @@ export type StudentTaskDetail = {
 export async function getStudentTaskDetail(taskId: string | number) {
   return request<{ ok: boolean; data: StudentTaskDetail }>('student/task_detail', {
     method: 'GET',
-    query: { task_id: taskId },
+    query: { task_id: String(taskId) },
   })
 }
 
@@ -157,7 +159,7 @@ export type StudentTaskRecordItem = {
 export async function getStudentTaskRecords(taskId: string | number) {
   return request<{ tasks: StudentTaskRecordItem[] }>('student/task', {
     method: 'GET',
-    query: { task_id: taskId },
+    query: { task_id: String(taskId) },
   })
 }
 
@@ -282,7 +284,7 @@ export async function analyzeStudentPronTest(params: StudentPronTestAnalyzeParam
     evaluation_id: string
     audio_file_id: string
     session_id: string
-    task_id: number
+    task_id: string
     sentence_seq: number
     ref_text: string
     result_score: unknown
@@ -313,7 +315,7 @@ export async function getTeacherClasses() {
 }
 
 export type TeacherTaskItem = {
-  task_id: number
+  task_id: string
   course: Array<{ class_id: string; class_name: string }>
   task_type: 'practice' | 'homework'
   title: string
@@ -330,7 +332,7 @@ export async function getTeacherTasks() {
 }
 
 export type TeacherClassTaskSummary = {
-  task_id: number
+  task_id: string
   title: string
   finished_students_count: number
   unfinished_students: Array<{
@@ -379,7 +381,7 @@ export async function getTeacherStudentBasicInformation(userId: string | number,
 }
 
 export type TeacherStudentTaskRecord = {
-  task_id: number
+  task_id: string
   title: string
   records_count: number
   records: Array<{
@@ -399,7 +401,7 @@ export async function getTeacherStudentRecords(userId: string | number, timeRang
 export async function getTeacherTaskBasicInformation(classId: string, taskId: string | number, timeRange?: string | null) {
   return request<TeacherScoreSummary>('teacher/task/basic_information', {
     method: 'POST',
-    body: { class_id: classId, task_id: Number(taskId), time_range: timeRange ?? null },
+    body: { class_id: classId, task_id: String(taskId), time_range: timeRange ?? null },
   })
 }
 
@@ -485,7 +487,7 @@ export async function updateTeacherTask(params: UpdateTeacherTaskParams) {
   return request<{ success: boolean }>('teacher/task/save', {
     method: 'POST',
     body: {
-      task_id: Number(params.taskId),
+      task_id: String(params.taskId),
       title: params.title,
       notes: params.notes,
       max_attempt: params.maxAttempt,
@@ -499,7 +501,7 @@ export async function updateTeacherTask(params: UpdateTeacherTaskParams) {
 export async function deleteTeacherTask(taskId: string | number) {
   return request<{ success: boolean }>('teacher/task/delete', {
     method: 'POST',
-    query: { task_id: taskId },
+    query: { task_id: String(taskId) },
   })
 }
 
@@ -517,7 +519,7 @@ export type TeacherTaskRecordStudent = {
 export async function getTeacherTaskRecords(classId: string, taskId: string | number) {
   return request<TeacherTaskRecordStudent[]>('teacher/task/records', {
     method: 'POST',
-    body: { class_id: classId, task_id: Number(taskId) },
+    body: { class_id: classId, task_id: String(taskId) },
   })
 }
 

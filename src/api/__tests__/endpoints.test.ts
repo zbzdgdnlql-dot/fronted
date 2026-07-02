@@ -55,8 +55,14 @@ describe('api/endpoints', () => {
   })
 
   it('login uses POST auth/login', async () => {
-    await login({ institute: 'i', user_type: 'Student', stu_id: '1001', password: 'p' })
-    expect(request).toHaveBeenCalledWith('auth/login', expect.objectContaining({ method: 'POST' }))
+    await login({ institute: '华东师范大学', school_seq: 'school-1', user_type: 'Student', stu_id: '1001', password: 'p' })
+    expect(request).toHaveBeenCalledWith(
+      'auth/login',
+      expect.objectContaining({
+        method: 'POST',
+        body: { institute: '华东师范大学', school_seq: 'school-1', user_type: 'Student', stu_id: '1001', password: 'p' },
+      }),
+    )
   })
 
   it('logout uses POST auth/logout', async () => {
@@ -219,10 +225,10 @@ describe('api/endpoints', () => {
   })
 
   it('teacher task basic information uses POST teacher/task/basic_information', async () => {
-    await getTeacherTaskBasicInformation('c1', '2')
+    await getTeacherTaskBasicInformation('c1', 'task-2')
     expect(request).toHaveBeenCalledWith(
       'teacher/task/basic_information',
-      expect.objectContaining({ method: 'POST', body: { class_id: 'c1', task_id: 2, time_range: null } }),
+      expect.objectContaining({ method: 'POST', body: { class_id: 'c1', task_id: 'task-2', time_range: null } }),
     )
   })
 
@@ -240,10 +246,10 @@ describe('api/endpoints', () => {
   })
 
   it('teacher records uses POST teacher/task/records', async () => {
-    await getTeacherTaskRecords('c1', '1')
+    await getTeacherTaskRecords('c1', 'task-1')
     expect(request).toHaveBeenCalledWith(
       'teacher/task/records',
-      expect.objectContaining({ method: 'POST', body: { class_id: 'c1', task_id: 1 } }),
+      expect.objectContaining({ method: 'POST', body: { class_id: 'c1', task_id: 'task-1' } }),
     )
   })
 
@@ -256,10 +262,10 @@ describe('api/endpoints', () => {
   })
 
   it('teacher legacy records wrapper delegates to teacher task records', async () => {
-    await getTeacherCustomContentRecords('1', 'c1')
+    await getTeacherCustomContentRecords('task-1', 'c1')
     expect(request).toHaveBeenCalledWith(
       'teacher/task/records',
-      expect.objectContaining({ method: 'POST', body: { class_id: 'c1', task_id: 1 } }),
+      expect.objectContaining({ method: 'POST', body: { class_id: 'c1', task_id: 'task-1' } }),
     )
   })
 
@@ -301,7 +307,7 @@ describe('api/endpoints', () => {
 
   it('update teacher task uses POST teacher/task/save without segments', async () => {
     await updateTeacherTask({
-      taskId: 1,
+      taskId: 'task-1',
       title: 'updated',
       notes: null,
       maxAttempt: 4,
@@ -312,7 +318,7 @@ describe('api/endpoints', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.objectContaining({
-          task_id: 1,
+          task_id: 'task-1',
           title: 'updated',
           notes: null,
           max_attempt: 4,

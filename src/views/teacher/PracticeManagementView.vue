@@ -43,7 +43,7 @@ const filteredContentList = computed(() => {
   return contentList.value.filter((item) => item.course.some((course) => course.class_id === selectedClassId.value))
 })
 
-const removeTask = async (taskId: number) => {
+const removeTask = async (taskId: string) => {
   try {
     await deleteTeacherTask(taskId)
     contentList.value = contentList.value.filter((item) => item.task_id !== taskId)

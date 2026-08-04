@@ -12,7 +12,6 @@ defineProps<{
   open: boolean
   selectedId?: string
   classes: ClassItem[]
-  loading?: boolean
 }>()
 
 const emit = defineEmits<{

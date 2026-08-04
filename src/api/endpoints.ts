@@ -277,6 +277,7 @@ export type TeacherClassItem = {
   student_count: number
   task_count: number
   grade_level: string
+  created_at?: string
 }
 
 export async function getTeacherClasses() {
@@ -436,4 +437,167 @@ export async function validateTeacherContent(contentText: string) {
 
 export async function getTeacherCustomContentRecords(taskId: string | number, classId: string) {
   return getTeacherTaskRecords(classId, taskId)
+}
+
+// ========================================
+// P0: 薄弱分析 — 新 API 封装
+// ========================================
+
+export type SessionSentence = {
+  sentence_text: string
+  pronunciation: number
+  rhythm: number
+  fluency: number
+  completeness: number
+  total_score: number
+}
+
+export type SessionDetail = {
+  session_id: string
+  total_score: number
+  submitted_at: string
+  sentences: SessionSentence[]
+}
+
+export async function getSessionDetail(sessionId: string) {
+  return request<SessionDetail>(`student/custom_content/detail/${sessionId}`, { method: 'GET' })
+}
+
+export type ProblemAreas = {
+  weak_phonemes: string[]
+  difficult_words: string[]
+  problematic_sentences: string[]
+}
+
+export async function getProblemAreas(sessionId: string) {
+  return request<ProblemAreas>(`student/custom_content/problem_areas/${sessionId}`, { method: 'GET' })
+}
+
+// ========================================
+// P1: 学习分析 — 新 API 封装
+// ========================================
+
+export async function getStudentHistoryPhonemes() {
+  return request<{ success: boolean; phonemes: string[] }>('student/history/phonemes', { method: 'GET' })
+}
+
+export type HistoryRankingItem = {
+  word?: string
+  phoneme?: string
+  score: number
+}
+
+export type HistoryRanking = {
+  best_words: HistoryRankingItem[]
+  worst_words: HistoryRankingItem[]
+  best_phonemes: HistoryRankingItem[]
+  worst_phonemes: HistoryRankingItem[]
+}
+
+export async function getStudentHistoryRanking() {
+  return request<HistoryRanking>('student/history/ranking', { method: 'GET' })
+}
+
+export type HistoryWordDetail = {
+  word: string
+  average_score: number
+  max_score: number
+  min_score: number
+  count: number
+  scores: Array<{ score: number; date: string }>
+}
+
+export async function getStudentHistoryWordDetail(word: string) {
+  return request<HistoryWordDetail>(`student/history/word/${encodeURIComponent(word)}`, { method: 'GET' })
+}
+
+export type HistoryPhonemeDetail = {
+  phoneme: string
+  average_score: number
+  max_score: number
+  min_score: number
+  count: number
+  scores: Array<{ score: number; date: string }>
+}
+
+export async function getStudentHistoryPhonemeDetail(phoneme: string) {
+  return request<HistoryPhonemeDetail>(`student/history/phoneme/${encodeURIComponent(phoneme)}`, { method: 'GET' })
+}
+
+// ========================================
+// P2: 班级管理 — 新 API 封装
+// ========================================
+
+export type ClassMember = {
+  user_id: number
+  username: string
+  stu_id?: string
+  user_type?: string
+  joined_at?: string
+}
+
+export type ClassManageResponse = {
+  class_id: string
+  class_name: string
+  members: ClassMember[]
+}
+
+export async function getClassManage(classId: string) {
+  return request<ClassManageResponse>(`teacher/class/${classId}/manage`, { method: 'GET' })
+}
+
+export async function addStudentToClass(classId: string, studentId: string) {
+  return request<{ success: boolean }>(`teacher/class/${classId}/add_student`, {
+    method: 'POST',
+    body: { student_id: studentId },
+  })
+}
+
+export async function removeStudentFromClass(classId: string, userId: number) {
+  return request<{ success: boolean }>(`teacher/class/${classId}/remove_student`, {
+    method: 'POST',
+    body: { user_id: userId },
+  })
+}
+
+// ========================================
+// P2: 学生表现 — 新 API 封装
+// ========================================
+
+export type StudentAnalysisResponse = {
+  student_name: string
+  evaluation_count: number
+  first_evaluation_at: string
+  last_evaluation_at: string
+  dimension_scores: {
+    pronunciation: number
+    rhythm: number
+    fluency: number
+    completeness: number
+  }
+  weak_phonemes: string[]
+  difficult_words: string[]
+}
+
+export async function getStudentAnalysis(classId: string, userId: string) {
+  return request<StudentAnalysisResponse>(`teacher/class/${classId}/student/${userId}/analysis`, { method: 'GET' })
+}
+
+export type ProgressScoreItem = {
+  date?: string
+  created_at?: string
+  pronunciation?: number
+  rhythm?: number
+  fluency?: number
+  completeness?: number
+}
+
+export type StudentProgressResponse = {
+  student_name?: string
+  evaluation_count?: number
+  scores: ProgressScoreItem[]
+}
+
+export async function getStudentProgress(userId: string) {
+  return request<StudentProgressResponse>(`teacher/api/student/${userId}/progress`, { method: 'GET' })
 }

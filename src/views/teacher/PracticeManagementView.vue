@@ -49,28 +49,108 @@ const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', 
           <h2 class="text-2xl font-black text-[#1F2937] tracking-tight">内容管理</h2>
           <p class="text-sm font-bold text-[#9CA3AF] mt-1">管理和发布教学练习内容</p>
         </div>
-        <div class="flex items-center gap-3">
+        <button
+          type="button"
+          class="bg-[#70C125] text-white px-5 py-3 rounded-2xl font-black text-sm flex items-center gap-2 hover:bg-[#63ad20] border-b-4 border-[#5E9E1A] active:border-b-0 active:translate-y-1 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+          :disabled="!selectedClassId"
+          @click="openCreate"
+        >
+          <Plus class="w-5 h-5" />
+          创建练习
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <label class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-2">
+          <span class="text-xs font-black text-gray-400 uppercase tracking-widest">班级</span>
+          <select
+            v-model="selectedClassId"
+            class="w-full bg-transparent outline-none text-sm font-bold text-gray-800"
+            @change="loadContents"
+          >
+            <option v-for="c in classes" :key="c.class_id" :value="c.class_id">
+              {{ c.class_name }}
+            </option>
+          </select>
+        </label>
+
+        <label class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-2 lg:col-span-2">
+          <span class="text-xs font-black text-gray-400 uppercase tracking-widest">练习标题</span>
+          <div class="flex items-center gap-2">
+            <Search class="w-4 h-4 text-gray-400" />
+            <input
+              v-model="filters.title"
+              class="w-full bg-transparent outline-none text-sm font-bold text-gray-800 placeholder:text-gray-400"
+              placeholder="输入标题"
+            />
+          </div>
+        </label>
+
+        <label class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-2">
+          <span class="text-xs font-black text-gray-400 uppercase tracking-widest">练习类型</span>
+          <select
+            v-model="filters.type"
+            class="w-full bg-transparent outline-none text-sm font-bold text-gray-800"
+          >
+            <option value="所有类型">所有类型</option>
+            <option value="句子练习">句子练习</option>
+            <option value="单词练习">单词练习</option>
+            <option value="综合作业">综合作业</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <ErrorState
+      v-if="contentsReq.error.value"
+      title="加载失败"
+      message="无法获取班级内容列表，请稍后重试。"
+      :busy="contentsReq.loading.value"
+      @retry="loadContents"
+    />
+
+    <section v-else class="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 md:p-8 flex flex-col gap-6">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <h3 class="text-lg font-black text-gray-900">已有练习列表</h3>
+        <p class="text-sm font-bold text-gray-400">已显示所有 {{ filteredPractices.length }} 个练习项目</p>
+      </div>
+
+      <div v-if="contentsReq.loading.value" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <SkeletonBlock class="h-36 w-full" />
+        <SkeletonBlock class="h-36 w-full" />
+        <SkeletonBlock class="h-36 w-full" />
+      </div>
+
+      <div v-else class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div
+          v-for="practice in filteredPractices"
+          :key="practice.id"
+          class="bg-[#F8F9FA] border border-gray-100 rounded-3xl p-6 flex flex-col gap-4 hover:bg-gray-50 transition-colors"
+        >
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex flex-col gap-1">
+              <h4 class="text-lg font-extrabold text-gray-900">{{ practice.title }}</h4>
+              <div class="text-sm font-bold text-gray-400">ID: {{ practice.id }}</div>
+            </div>
+            <div class="px-3 py-1.5 rounded-full bg-white border border-gray-100 text-xs font-black text-gray-500">
+              {{ practice.type }}
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <div v-if="practice.attemptsLimit" class="text-sm font-bold text-gray-600">
+              次数限制 {{ practice.attemptsLimit }}
+            </div>
+            <div class="text-sm font-bold text-gray-600">创建于 {{ practice.createdAt }}</div>
+          </div>
+
           <button
             type="button"
-            class="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#E2E8F0] bg-white text-sm font-bold text-[#475569] hover:bg-[#F8FAFC] shadow-sm transition-colors"
+            class="mt-auto bg-white border border-gray-100 rounded-2xl px-4 py-3 flex items-center justify-between hover:border-blue-200 hover:bg-blue-50 transition-colors"
+            @click="openSubmissions(practice.id)"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
-            筛选班级
-          </button>
-          <button
-            type="button"
-            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F2F5E8] text-sm font-bold text-[#356B00] hover:bg-[#E5EED3] shadow-sm transition-colors"
-            @click="router.push('/teacher/exercise')"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-            创建新内容
-          </button>
-          <button
-            type="button"
-            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#356B00] text-white text-sm font-bold hover:bg-[#2E5E00] shadow-sm transition-colors"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>
-            导入
+            <span class="text-sm font-black text-blue-600">查看提交</span>
+            <ChevronRight class="w-5 h-5 text-blue-600" />
           </button>
         </div>
       </div>

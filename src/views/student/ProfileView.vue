@@ -4,6 +4,7 @@ import { CalendarDays, CheckCircle2, GraduationCap, Hash, History, Layers3 } fro
 import avatarUrl from '../../assets/figma/avatar.png'
 import ErrorState from '../../components/ErrorState.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
+import EmptyState from '../../components/EmptyState.vue'
 import {
   getStudentArchiveStatistics,
   getStudentHistoryWords,
@@ -13,6 +14,7 @@ import {
 } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
 import { useAuth } from '../../stores/auth'
+import router from '../../router'
 
 const auth = useAuth()
 const userReq = useAsync<Awaited<ReturnType<typeof getUserDetail>>>()
@@ -32,7 +34,6 @@ const classes = computed(() =>
 )
 
 const displayName = computed(() => userDetail.value?.username || `学生 ${session.value?.user_id ?? ''}`.trim())
-
 const handle = computed(() => `@${userDetail.value?.stu_id ?? session.value?.user_id ?? 'guest'}`)
 const currentClass = computed(() => {
   const currentClassId = auth.session.value?.class_context?.class_id
@@ -47,11 +48,6 @@ const genderLabel = computed(() => {
   if (userDetail.value?.gender === false) return '女'
   return '未填写'
 })
-const accountStatus = computed(() => {
-  if (userDetail.value?.is_active === true) return '已启用'
-  if (userDetail.value?.is_active === false) return '已停用'
-  return '状态未知'
-})
 
 const formatDate = (value: string | null | undefined) => {
   if (!value) return '暂无记录'
@@ -59,39 +55,20 @@ const formatDate = (value: string | null | undefined) => {
 }
 
 const statCards = computed(() => [
-    { label: '完成条目', value: archive.value?.total_entries ?? 0, icon: CheckCircle2 },
-    {
-      label: '平均分',
-      value: archive.value && archive.value.average_score >= 0 ? archive.value.average_score.toFixed(1) : '--',
-      icon: Layers3,
-    },
-    {
-      label: '最高分',
-      value: archive.value && archive.value.max_score >= 0 ? archive.value.max_score.toFixed(1) : '--',
-      icon: GraduationCap,
-    },
+  { label: '完成条目', value: archive.value?.total_entries ?? 0, icon: CheckCircle2 },
+  {
+    label: '平均分',
+    value: archive.value && archive.value.average_score >= 0 ? archive.value.average_score.toFixed(1) : '--',
+    icon: Layers3,
+  },
+  {
+    label: '最高分',
+    value: archive.value && archive.value.max_score >= 0 ? archive.value.max_score.toFixed(1) : '--',
+    icon: GraduationCap,
+  },
 ])
 
-const activityCells = computed(() => {
-  const total = archive.value?.total_entries ?? 0
-  return Array.from({ length: 35 }, (_, index) => {
-    const level = total <= 0 ? 0 : Math.min(4, Math.max(1, Math.ceil(((index * 7 + total) % 11) / 3)))
-    return { index, level }
-  })
-})
-
-const activityClass = (level: number) => {
-  const classes = [
-    'bg-gray-100',
-    'bg-[#DCEFCC]',
-    'bg-[#BEE994]',
-    'bg-[#8FD64B]',
-    'bg-[#70C125]',
-  ]
-  return classes[level] ?? classes[0]
-}
-
-const load = async () => {
+const loadAll = async () => {
   await Promise.all([
     userReq.run(() => getUserDetail()),
     archiveReq.run(() => getStudentArchiveStatistics()),
@@ -99,27 +76,41 @@ const load = async () => {
   ])
 }
 
+const hasError = computed(() => userReq.error.value || archiveReq.error.value || wordsReq.error.value)
+const isLoading = computed(() => userReq.loading.value || archiveReq.loading.value || wordsReq.loading.value)
+
 onMounted(() => {
-  void load()
+  void loadAll()
 })
 </script>
 
 <template>
-  <main class="flex-1 w-full max-w-[1440px] mx-auto p-8 flex flex-col gap-6">
-    <div class="flex flex-col gap-2">
-      <h2 class="text-2xl font-black text-gray-900 tracking-tight">个人中心</h2>
-      <p class="text-sm font-bold text-gray-400">查看身份信息、班级归属与评测概览。</p>
+  <main class="flex-1 w-full max-w-[1440px] mx-auto p-8 flex flex-col gap-8">
+    <div class="flex items-center justify-between gap-6">
+      <div class="flex flex-col gap-2">
+        <h2 class="text-2xl font-black text-gray-900 tracking-tight">个人中心</h2>
+        <p class="text-sm font-bold text-gray-400">查看身份信息、班级归属与评测概览。</p>
+      </div>
+      <button
+        type="button"
+        class="inline-flex items-center gap-2 text-sm font-black text-gray-500 hover:text-gray-700"
+        @click="router.push('/')"
+      >
+        返回主页
+      </button>
     </div>
 
     <ErrorState
-      v-if="userReq.error.value || archiveReq.error.value || wordsReq.error.value"
+      v-if="hasError && !isLoading"
       message="无法获取个人中心数据，请检查登录状态或稍后重试。"
-      :busy="userReq.loading.value || archiveReq.loading.value || wordsReq.loading.value"
-      @retry="load"
+      :busy="isLoading"
+      @retry="loadAll"
     />
 
     <div v-else class="grid grid-cols-1 xl:grid-cols-12 gap-8">
+      <!-- Left Sidebar -->
       <aside class="xl:col-span-4 flex flex-col gap-5">
+        <!-- User Profile Card -->
         <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
           <div class="flex flex-col sm:flex-row xl:flex-col gap-5">
             <SkeletonBlock v-if="userReq.loading.value" class="w-32 h-32 rounded-full" />
@@ -166,6 +157,7 @@ onMounted(() => {
           </div>
         </section>
 
+        <!-- Profile Details -->
         <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-4">
           <h3 class="text-lg font-black text-gray-900">资料</h3>
 
@@ -187,7 +179,7 @@ onMounted(() => {
               </div>
               <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
                 <span class="text-xs font-black text-gray-400">账号状态</span>
-                <span class="text-sm font-black text-gray-900">{{ accountStatus }}</span>
+                <span class="text-sm font-black text-gray-900">{{ userDetail?.is_active === true ? '已启用' : userDetail?.is_active === false ? '已停用' : '状态未知' }}</span>
               </div>
             </div>
             <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
@@ -201,6 +193,7 @@ onMounted(() => {
           </div>
         </section>
 
+        <!-- Classes -->
         <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-4">
           <div class="flex items-center justify-between gap-3">
             <h3 class="text-lg font-black text-gray-900">班级</h3>
@@ -212,9 +205,11 @@ onMounted(() => {
             <SkeletonBlock class="h-16 w-full" />
           </template>
 
-          <div v-else-if="!classes.length" class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 text-sm font-bold text-gray-500">
-            暂无班级
-          </div>
+          <EmptyState
+            v-else-if="!classes.length"
+            title="暂无班级"
+            description="你还未加入任何班级。"
+          />
 
           <div v-else class="flex flex-col gap-3">
             <div
@@ -229,7 +224,9 @@ onMounted(() => {
         </section>
       </aside>
 
+      <!-- Right Content -->
       <section class="xl:col-span-8 flex flex-col gap-6">
+        <!-- Stats -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <template v-if="archiveReq.loading.value">
             <SkeletonBlock v-for="n in 3" :key="n" class="h-28 w-full" />
@@ -251,32 +248,7 @@ onMounted(() => {
           </article>
         </div>
 
-        <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
-          <div class="flex items-center justify-between gap-4">
-            <h3 class="text-lg font-black text-gray-900">活跃概览</h3>
-            <span class="text-xs font-black text-gray-400">评测活动</span>
-          </div>
-
-          <div class="grid grid-cols-7 gap-2 max-w-[420px]">
-            <div
-              v-for="cell in activityCells"
-              :key="cell.index"
-              class="aspect-square rounded-md border border-white"
-              :class="activityClass(cell.level)"
-            ></div>
-          </div>
-
-          <div class="flex items-center gap-2 text-xs font-bold text-gray-400">
-            <span>少</span>
-            <span class="w-3 h-3 rounded-sm bg-gray-100"></span>
-            <span class="w-3 h-3 rounded-sm bg-[#DCEFCC]"></span>
-            <span class="w-3 h-3 rounded-sm bg-[#BEE994]"></span>
-            <span class="w-3 h-3 rounded-sm bg-[#8FD64B]"></span>
-            <span class="w-3 h-3 rounded-sm bg-[#70C125]"></span>
-            <span>多</span>
-          </div>
-        </section>
-
+        <!-- History Words -->
         <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
           <div class="flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
@@ -291,9 +263,11 @@ onMounted(() => {
             <SkeletonBlock class="h-10 w-3/4" />
           </template>
 
-          <div v-else-if="!words.length" class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-5 text-sm font-bold text-gray-500">
-            暂无历史单词
-          </div>
+          <EmptyState
+            v-else-if="!words.length"
+            title="暂无历史单词"
+            description="完成评测后，单词将出现在这里。"
+          />
 
           <div v-else class="flex flex-wrap gap-3">
             <span
@@ -303,6 +277,33 @@ onMounted(() => {
             >
               {{ word }}
             </span>
+          </div>
+        </section>
+
+        <!-- Activity Overview -->
+        <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
+          <div class="flex items-center justify-between gap-4">
+            <h3 class="text-lg font-black text-gray-900">活跃概览</h3>
+            <span class="text-xs font-black text-gray-400">评测活动</span>
+          </div>
+
+          <div class="grid grid-cols-7 gap-2 max-w-[420px]">
+            <div
+              v-for="cell in Array.from({ length: 35 }, (_, i) => i)"
+              :key="cell"
+              class="aspect-square rounded-md border border-white"
+              :class="archive?.total_entries ? 'bg-[#DCEFCC]' : 'bg-gray-100'"
+            ></div>
+          </div>
+
+          <div class="flex items-center gap-2 text-xs font-bold text-gray-400">
+            <span>少</span>
+            <span class="w-3 h-3 rounded-sm bg-gray-100"></span>
+            <span class="w-3 h-3 rounded-sm bg-[#DCEFCC]"></span>
+            <span class="w-3 h-3 rounded-sm bg-[#BEE994]"></span>
+            <span class="w-3 h-3 rounded-sm bg-[#8FD64B]"></span>
+            <span class="w-3 h-3 rounded-sm bg-[#70C125]"></span>
+            <span>多</span>
           </div>
         </section>
       </section>

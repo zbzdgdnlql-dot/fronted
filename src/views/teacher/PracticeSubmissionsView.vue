@@ -82,23 +82,145 @@ const heading = '法语精读1班 · 练习提交'
         </div>
       </div>
 
-      <div class="w-[290px] shrink-0 flex flex-col gap-6">
-        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #01658B;">
-          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">提交总数</span>
-          <span class="text-3xl font-black text-[#1F2937]">{{ stats.total }}</span>
-        </div>
-        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #FFB800;">
-          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">待批改</span>
-          <span class="text-3xl font-black text-[#1F2937]">{{ stats.pending }}</span>
-        </div>
-        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #356B00;">
-          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">已批改</span>
-          <span class="text-3xl font-black text-[#1F2937]">{{ stats.graded }}</span>
-        </div>
-        <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4" style="border-left: 4px solid #BA1A1A;">
-          <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">平均分</span>
-          <span class="text-3xl font-black text-[#1F2937]">{{ stats.avgScore.toFixed(1) }}</span>
-        </div>
+      <div class="grid grid-cols-1 xl:grid-cols-12 gap-8">
+        <ErrorState
+          v-if="req.error.value"
+          class="xl:col-span-8"
+          title="加载失败"
+          message="无法获取提交列表，请稍后重试。"
+          :busy="req.loading.value"
+          @retry="load"
+        />
+
+        <section v-else class="xl:col-span-8 bg-white rounded-3xl border border-gray-100 shadow-sm p-6 md:p-8 flex flex-col gap-6">
+          <div class="flex items-center justify-between gap-4 flex-wrap">
+            <h3 class="text-lg font-black text-gray-900">学生提交列表</h3>
+            <div class="flex items-center gap-3">
+              <div class="bg-[#F8F9FA] border border-gray-100 rounded-2xl px-4 py-3 flex items-center gap-2">
+                <Search class="w-4 h-4 text-gray-400" />
+                <input
+                  v-model="keyword"
+                  class="bg-transparent outline-none text-sm font-bold text-gray-800 placeholder:text-gray-400 w-52"
+                  placeholder="筛选"
+                />
+              </div>
+              <div class="w-11 h-11 rounded-2xl bg-[#F8F9FA] border border-gray-100 flex items-center justify-center">
+                <Filter class="w-5 h-5 text-gray-700" />
+              </div>
+            </div>
+          </div>
+
+          <div class="overflow-hidden rounded-2xl border border-gray-100">
+            <table class="w-full text-left">
+              <thead class="bg-[#F8F9FA]">
+                <tr class="text-xs font-black text-gray-400 uppercase tracking-widest">
+                  <th class="px-5 py-4">学生</th>
+                  <th class="px-5 py-4">尝试序号</th>
+                  <th class="px-5 py-4">状态</th>
+                  <th class="px-5 py-4">提交时间</th>
+                  <th class="px-5 py-4">操作</th>
+                </tr>
+              </thead>
+              <tbody class="bg-white">
+                <tr v-if="req.loading.value">
+                  <td class="px-5 py-4" colspan="5">
+                    <div class="flex flex-col gap-3">
+                      <SkeletonBlock class="h-10 w-full" />
+                      <SkeletonBlock class="h-10 w-full" />
+                      <SkeletonBlock class="h-10 w-full" />
+                    </div>
+                  </td>
+                </tr>
+                <tr
+                  v-else-if="filtered.length === 0"
+                >
+                  <td class="px-5 py-8 text-sm font-bold text-gray-500" colspan="5">暂无提交</td>
+                </tr>
+                <tr
+                  v-else
+                  v-for="(item, idx) in filtered"
+                  :key="item.studentId + item.sessionId"
+                  :class="idx !== filtered.length - 1 ? 'border-b border-gray-100' : ''"
+                >
+                  <td class="px-5 py-4">
+                    <div class="flex items-center gap-3">
+                      <div class="w-10 h-10 rounded-2xl bg-gray-50 border border-gray-100 flex items-center justify-center text-sm font-black text-gray-700">
+                        {{ item.studentName.slice(0, 2).toUpperCase() }}
+                      </div>
+                      <div class="text-sm font-extrabold text-gray-900">{{ item.studentName }}</div>
+                    </div>
+                  </td>
+                  <td class="px-5 py-4 text-sm font-black text-gray-700">{{ item.attempt }}</td>
+                  <td class="px-5 py-4">
+                    <span
+                      :class="[
+                        'px-3 py-1.5 rounded-full text-xs font-black',
+                        item.status === '已提交' ? 'bg-blue-50 text-blue-600' : '',
+                        item.status === '待提交' ? 'bg-gray-100 text-gray-500' : '',
+                        item.status === '已批改' ? 'bg-[#EAF0DD] text-[#70C125]' : '',
+                      ]"
+                    >
+                      {{ item.status }}
+                    </span>
+                  </td>
+                  <td class="px-5 py-4 text-sm font-bold text-gray-600">{{ item.submittedAt }}</td>
+                  <td class="px-5 py-4">
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-2 text-sm font-black text-blue-600 hover:text-blue-700"
+                      @click="openGrading(item)"
+                    >
+                      {{ item.action }}
+                      <ChevronRight class="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="flex items-center justify-between text-sm font-bold text-gray-400">
+            <div>共 {{ filtered.length }} 条提交记录</div>
+            <div class="text-sm font-black text-gray-500">历史</div>
+          </div>
+        </section>
+
+        <aside class="xl:col-span-4 flex flex-col gap-8">
+          <section class="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 md:p-8 flex flex-col gap-6">
+            <h3 class="text-lg font-black text-gray-900">提交概览</h3>
+            <div class="flex flex-col gap-4">
+              <div class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex items-center justify-between">
+                <div class="text-xs font-black text-gray-400 uppercase tracking-widest">提交率</div>
+                <div class="text-xl font-black text-gray-900">--</div>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-1">
+                  <div class="text-xs font-black text-gray-400 uppercase tracking-widest">待批改</div>
+                  <div class="text-2xl font-black text-gray-900">--</div>
+                </div>
+                <div class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-1">
+                  <div class="text-xs font-black text-gray-400 uppercase tracking-widest">已完成</div>
+                  <div class="text-2xl font-black text-gray-900">--</div>
+                </div>
+              </div>
+            </div>
+            <!-- TODO: 后端若提供统计字段（提交率/待批改/已完成），在此处接入并展示。 -->
+          </section>
+
+          <section class="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 md:p-8 flex flex-col gap-6">
+            <h3 class="text-lg font-black text-gray-900">最近动态</h3>
+            <div class="flex flex-col gap-4">
+              <div class="flex items-start justify-between gap-4">
+                <div class="text-sm font-extrabold text-gray-900">系统 已发送到期提醒</div>
+                <div class="text-sm font-bold text-gray-400">10分钟前</div>
+              </div>
+              <div class="flex items-start justify-between gap-4">
+                <div class="text-sm font-extrabold text-gray-900">系统 已发送到期提醒</div>
+                <div class="text-sm font-bold text-gray-400">1小时前</div>
+              </div>
+            </div>
+          </section>
+        </aside>
       </div>
     </div>
   </div>

@@ -14,15 +14,16 @@ const classMenuOpen = ref(false)
 const studentLinks = [
   { name: '主页', path: '/' },
   { name: '任务', path: '/tasks' },
-  { name: '历史记录', path: '/history' },
+  { name: '学习分析', path: '/student/analysis' },
   { name: '档案资料', path: '/archive' },
-  { name: '个人中心', path: '/profile' },
+  { name: '个人中心', path: '/student/profile' },
   { name: '关于', path: '/about' },
 ] as const
 
 const teacherLinks = [
   { name: '概览', path: '/teacher/overview' },
   { name: '内容管理', path: '/teacher/content' },
+  { name: '班级管理', path: '/teacher/classes' },
   { name: '关于', path: '/about' },
 ] as const
 

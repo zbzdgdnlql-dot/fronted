@@ -83,20 +83,58 @@ const router = createRouter({
         },
       ],
     },
+    // P2: 教师端新页面
+    {
+      path: '/teacher/classes',
+      name: 'teacher-classes',
+      component: () => import('../views/teacher/ClassManagementView.vue'),
+    },
+    {
+      path: '/teacher/classes/:classId/organize',
+      name: 'teacher-class-organize',
+      component: () => import('../views/teacher/ClassOrganizationView.vue'),
+    },
+    {
+      path: '/teacher/classes/:classId/student/:userId',
+      name: 'teacher-student-performance',
+      component: () => import('../views/teacher/StudentPerformanceView.vue'),
+    },
+    // P1: 学习分析 — 替换旧 /history
+    {
+      path: '/student/analysis',
+      name: 'student-analysis',
+      component: () => import('../views/student/AnalysisView.vue'),
+    },
+    // P0: 薄弱分析 — 替换旧 /evaluate/result
+    {
+      path: '/student/weakness',
+      name: 'student-weakness',
+      component: () => import('../views/student/WeaknessResultView.vue'),
+    },
+    // P1: 个人中心 — 替换旧 /profile
+    {
+      path: '/student/profile',
+      name: 'student-profile',
+      component: () => import('../views/student/ProfileView.vue'),
+    },
+    // 旧路由保留（重定向到新路由）
     {
       path: '/history',
-      name: 'history',
-      component: () => import('../views/placeholders/StudentHistoryView.vue'),
+      redirect: '/student/analysis',
     },
+    {
+      path: '/profile',
+      redirect: '/student/profile',
+    },
+    {
+      path: '/evaluate/result',
+      redirect: '/student/weakness',
+    },
+    // 现有保留路由
     {
       path: '/archive',
       name: 'archive',
       component: () => import('../views/placeholders/StudentArchiveView.vue'),
-    },
-    {
-      path: '/profile',
-      name: 'profile',
-      component: () => import('../views/placeholders/ProfileView.vue'),
     },
     {
       path: '/about',
@@ -107,11 +145,6 @@ const router = createRouter({
       path: '/evaluate/recording',
       name: 'evaluate-recording',
       component: () => import('../views/placeholders/RecordingView.vue'),
-    },
-    {
-      path: '/evaluate/result',
-      name: 'evaluate-result',
-      component: () => import('../views/placeholders/ResultView.vue'),
     },
   ],
 })

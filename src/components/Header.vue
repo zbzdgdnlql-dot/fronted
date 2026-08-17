@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { useAuth } from '../stores/auth'
 import { logout as apiLogout } from '../api/endpoints'
 import { useToast } from '../composables/useToast'
+import UserAccountMenu from './UserAccountMenu.vue'
 import router from '../router'
 
 const route = useRoute()
@@ -129,9 +130,7 @@ onBeforeUnmount(() => {
         退出
       </button>
 
-      <div class="w-10 h-10 rounded-full border-2 border-[#70C125] p-0.5 overflow-hidden flex items-center justify-center bg-blue-50">
-        <img src="../assets/figma/avatar.png" alt="Avatar" class="w-full h-full object-cover rounded-full" />
-      </div>
+      <UserAccountMenu />
     </div>
   </header>
 </template>

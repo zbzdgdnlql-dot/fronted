@@ -2,10 +2,16 @@
 import { Mic, BookA, Headphones, PenLine, ChevronRight, CheckCircle2, PlayCircle } from 'lucide-vue-next'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 import type { StudentSessionEvaluationItem, StudentTaskDetail, StudentTaskRecordItem } from '../../api/endpoints'
+import {
+  getStudentTaskAvailability,
+  studentTaskAvailabilityLabels,
+  studentTaskStartButtonLabels,
+} from '../../utils/studentTaskAvailability'
 
 const props = defineProps<{
   loading: boolean
   taskDetail: StudentTaskDetail | null
+  selectedTaskId: string | null
   taskDetailLoading: boolean
   taskDetailError: string | null
   records: StudentTaskRecordItem[]
@@ -17,7 +23,7 @@ const props = defineProps<{
 
 defineEmits<{
   (e: 'selectRecord', sessionId: string): void
-  (e: 'startTest', taskId: number): void
+  (e: 'startTest', taskId: string): void
 }>()
 
 const iconFor = (i: number) => {
@@ -43,6 +49,32 @@ const formatDate = (value: string | null) => {
   if (!value) return '--'
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
+
+const taskWindowStatus = (task: StudentTaskDetail) => getStudentTaskAvailability({
+  isActive: task.is_active,
+  availableFrom: task.available_from,
+  availableUntil: task.available_until,
+  maxAttempts: task.max_attempt,
+  attemptCount: props.records.length,
+})
+
+const taskStatusLabel = (task: StudentTaskDetail) => {
+  return studentTaskAvailabilityLabels[taskWindowStatus(task)]
+}
+
+const taskStatusClass = (task: StudentTaskDetail) => {
+  return taskWindowStatus(task) === 'open' ? 'bg-[#EAF0DD] text-[#70C125]' : 'bg-gray-100 text-gray-500'
+}
+
+const canStartTask = (task: StudentTaskDetail) => taskWindowStatus(task) === 'open'
+
+const startButtonText = (task: StudentTaskDetail) => {
+  return studentTaskStartButtonLabels[taskWindowStatus(task)]
+}
+
+const attemptCount = () => props.records.length
+const completionLabel = () => attemptCount() >= 1 ? 'completed' : 'uncompleted'
+const completionClass = () => attemptCount() >= 1 ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'
 </script>
 
 <template>
@@ -73,9 +105,15 @@ const formatDate = (value: string | null) => {
               </span>
               <span
                 class="rounded-full px-3 py-1 text-xs font-black"
-                :class="props.taskDetail.is_active ? 'bg-[#EAF0DD] text-[#70C125]' : 'bg-gray-100 text-gray-500'"
+                :class="taskStatusClass(props.taskDetail)"
               >
-                {{ props.taskDetail.is_active ? '进行中' : '未启用' }}
+                {{ taskStatusLabel(props.taskDetail) }}
+              </span>
+              <span
+                class="rounded-full px-3 py-1 text-xs font-black"
+                :class="completionClass()"
+              >
+                {{ completionLabel() }}
               </span>
             </div>
             <h3 class="text-xl font-black text-gray-900">{{ props.taskDetail.title }}</h3>
@@ -87,11 +125,15 @@ const formatDate = (value: string | null) => {
               <span class="text-xs font-black text-gray-400">最多提交</span>
               <span class="text-lg font-black text-gray-900">{{ props.taskDetail.max_attempt ?? '--' }} 次</span>
             </div>
+            <div class="rounded-2xl bg-white border border-gray-100 px-4 py-3 flex items-center justify-between gap-4">
+              <span class="text-xs font-black text-gray-400">已尝试</span>
+              <span class="text-lg font-black text-gray-900">{{ attemptCount() }} 次</span>
+            </div>
             <button
-              v-if="props.taskDetail.is_active"
+              v-if="canStartTask(props.taskDetail)"
               type="button"
               class="rounded-2xl bg-[#70C125] px-5 py-3 text-sm font-black text-white flex items-center justify-center gap-2 border-b-4 border-[#5E9E1A] hover:bg-[#63ad20] active:border-b-0 active:translate-y-1 transition-all"
-              @click="$emit('startTest', props.taskDetail.task_id)"
+              @click="$emit('startTest', props.selectedTaskId ?? String(props.taskDetail.task_id))"
             >
               <PlayCircle class="w-5 h-5" />
               进入测试
@@ -103,7 +145,7 @@ const formatDate = (value: string | null) => {
               disabled
             >
               <PlayCircle class="w-5 h-5" />
-              暂未开始
+              {{ startButtonText(props.taskDetail) }}
             </button>
           </div>
         </div>

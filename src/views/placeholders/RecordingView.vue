@@ -6,8 +6,10 @@ import {
   analyzeStudentPronTest,
   createStudentTestSession,
   getStudentTaskDetail,
+  getStudentTaskRecords,
   submitStudentTestSession,
   type CreateStudentTestSessionResponse,
+  type StudentTaskRecordItem,
   type StudentTaskDetail,
   type SubmitStudentTestSessionResponse,
 } from '../../api/endpoints'
@@ -15,6 +17,11 @@ import ErrorState from '../../components/ErrorState.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 import { useAsync } from '../../composables/useAsync'
 import { useToast } from '../../composables/useToast'
+import {
+  getStudentTaskAvailability,
+  studentTaskAvailabilityMessages,
+  type StudentTaskAvailabilityStatus,
+} from '../../utils/studentTaskAvailability'
 
 type SentenceStatus = 'pending' | 'recording' | 'analyzing' | 'done' | 'error'
 
@@ -30,6 +37,7 @@ const router = useRouter()
 const toast = useToast()
 
 const taskReq = useAsync<{ ok: boolean; data: StudentTaskDetail }>()
+const recordsReq = useAsync<{ tasks: StudentTaskRecordItem[] }>()
 const createReq = useAsync<CreateStudentTestSessionResponse>()
 const submitReq = useAsync<SubmitStudentTestSessionResponse>()
 
@@ -43,6 +51,12 @@ const submitResult = ref<SubmitStudentTestSessionResponse | null>(null)
 const recorder = shallowRef<MediaRecorder | null>(null)
 const stream = shallowRef<MediaStream | null>(null)
 let recordedChunks: Blob[] = []
+let recordingTimer: number | null = null
+let discardRecordingOnStop = false
+
+const MIN_RECORDING_MS = 1500
+const MIN_AUDIO_BLOB_BYTES = 4096
+const MEDIA_RECORDER_TIMESLICE_MS = 250
 
 const routeValue = (value: unknown) => {
   if (Array.isArray(value)) return value[0] ?? ''
@@ -51,6 +65,7 @@ const routeValue = (value: unknown) => {
 
 const taskId = computed(() => routeValue(route.params.taskId) || routeValue(route.query.taskId))
 const taskDetail = computed(() => taskReq.data.value?.data ?? null)
+const records = computed(() => recordsReq.data.value?.tasks ?? [])
 const segments = computed(() => taskDetail.value?.segments ?? [])
 const sentencePageSize = 4
 const currentSentence = computed(() => segments.value[activeIndex.value] ?? '')
@@ -69,8 +84,43 @@ const progressPercent = computed(() => {
   return Math.round((completedCount.value / segments.value.length) * 100)
 })
 const progressStyle = computed(() => ({ width: `${progressPercent.value}%` }))
-const canRecord = computed(() => !!taskDetail.value?.is_active && !!currentSentence.value && !recording.value && !analyzing.value && !submitReq.loading.value)
-const canSubmit = computed(() => !!sessionId.value && completedCount.value > 0 && !recording.value && !analyzing.value && !submitReq.loading.value)
+const allSentencesCompleted = computed(() => segments.value.length > 0 && completedCount.value === segments.value.length)
+const taskWindowStatus = computed<StudentTaskAvailabilityStatus>(() => {
+  const task = taskDetail.value
+  if (!task) return 'inactive'
+  return getStudentTaskAvailability({
+    isActive: task.is_active,
+    availableFrom: task.available_from,
+    availableUntil: task.available_until,
+    maxAttempts: task.max_attempt,
+    attemptCount: records.value.length,
+  })
+})
+const taskWindowOpen = computed(() => taskWindowStatus.value === 'open')
+const taskWindowLabel = computed(() => {
+  const labels = {
+    inactive: '未开放',
+    not_started: '未开始',
+    ended: '已结束',
+    attempts_exhausted: '次数已用完',
+    open: '可测试',
+  }
+  return labels[taskWindowStatus.value]
+})
+const taskWindowClass = computed(() => (taskWindowOpen.value ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-500'))
+const taskWindowMessage = computed(() => {
+  return studentTaskAvailabilityMessages[taskWindowStatus.value]
+})
+const canRecord = computed(() => taskWindowOpen.value && !!currentSentence.value && !recording.value && !analyzing.value && !submitReq.loading.value)
+const recordingStartedAt = ref<number | null>(null)
+const recordingElapsedMs = ref(0)
+const canStopRecording = computed(() => recording.value && recordingElapsedMs.value >= MIN_RECORDING_MS)
+const stopRecordingLabel = computed(() => {
+  if (!recording.value || canStopRecording.value) return '停止录音'
+  const remainingMs = Math.max(0, MIN_RECORDING_MS - recordingElapsedMs.value)
+  return `至少录制 ${(remainingMs / 1000).toFixed(1)} 秒`
+})
+const canSubmit = computed(() => !!sessionId.value && taskWindowOpen.value && allSentencesCompleted.value && !recording.value && !analyzing.value && !submitReq.loading.value)
 const averageScore = computed(() => {
   const scores = results.value
     .map((item) => item.score)
@@ -135,9 +185,35 @@ const stopStream = () => {
   stream.value = null
 }
 
+const clearRecordingTimer = () => {
+  if (recordingTimer !== null) {
+    window.clearInterval(recordingTimer)
+    recordingTimer = null
+  }
+}
+
+const startRecordingTimer = () => {
+  clearRecordingTimer()
+  recordingStartedAt.value = Date.now()
+  recordingElapsedMs.value = 0
+  recordingTimer = window.setInterval(() => {
+    if (recordingStartedAt.value === null) return
+    recordingElapsedMs.value = Date.now() - recordingStartedAt.value
+  }, 100)
+}
+
+const resetRecordingTimer = () => {
+  clearRecordingTimer()
+  recordingStartedAt.value = null
+  recordingElapsedMs.value = 0
+}
+
 const loadTask = async () => {
   if (!taskId.value) return
-  await taskReq.run(() => getStudentTaskDetail(taskId.value))
+  await Promise.all([
+    taskReq.run(() => getStudentTaskDetail(taskId.value)),
+    recordsReq.run(() => getStudentTaskRecords(taskId.value)),
+  ])
 }
 
 const ensureSession = async () => {
@@ -170,7 +246,10 @@ const setCurrentResult = (patch: Partial<SentenceResult>) => {
 }
 
 const startRecording = async () => {
-  if (!canRecord.value) return
+  if (!canRecord.value) {
+    if (taskWindowMessage.value) toast.push(taskWindowMessage.value, 'error')
+    return
+  }
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
     toast.push('当前浏览器不支持录音，请换用 Chrome 或 Edge 测试。', 'error')
     return
@@ -180,6 +259,7 @@ const startRecording = async () => {
     submitResult.value = null
     await ensureSession()
     recordedChunks = []
+    discardRecordingOnStop = false
     const nextStream = await navigator.mediaDevices.getUserMedia({ audio: true })
     stream.value = nextStream
     const preferredType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : ''
@@ -190,21 +270,50 @@ const startRecording = async () => {
     }
 
     nextRecorder.onstop = () => {
+      const elapsedMs = recordingStartedAt.value === null ? 0 : Date.now() - recordingStartedAt.value
       const mimeType = recordedChunks[0]?.type || preferredType || 'audio/webm'
       const audio = new Blob(recordedChunks, { type: mimeType })
       recording.value = false
+      resetRecordingTimer()
       stopStream()
+      if (discardRecordingOnStop) return
+      if (elapsedMs < MIN_RECORDING_MS) {
+        setCurrentResult({ status: 'error', error: '录音时间过短，请至少录制 1.5 秒后重试' })
+        toast.push('录音时间过短，请至少录制 1.5 秒后重试', 'error')
+        return
+      }
+      if (!audio.size) {
+        setCurrentResult({ status: 'error', error: '录音内容为空，请稍微延长朗读时间后重试' })
+        toast.push('录音内容为空，请稍微延长朗读时间后重试', 'error')
+        return
+      }
+      if (audio.size < MIN_AUDIO_BLOB_BYTES) {
+        setCurrentResult({ status: 'error', error: '录音数据过短或不完整，请重新录制后再试' })
+        toast.push('录音数据过短或不完整，请重新录制后再试', 'error')
+        return
+      }
       void analyzeCurrentSentence(audio)
     }
 
     recorder.value = nextRecorder
     setCurrentResult({ status: 'recording', error: null })
-    nextRecorder.start()
+    nextRecorder.start(MEDIA_RECORDER_TIMESLICE_MS)
     recording.value = true
+    startRecordingTimer()
   } catch (error) {
     recording.value = false
+    resetRecordingTimer()
     stopStream()
     const message = error instanceof Error ? error.message : '无法开始录音'
+    if (message === 'Task has ended' || message === 'Task has not started' || message === 'Task unavailable') {
+      toast.push(taskWindowMessage.value || message, 'error')
+      return
+    }
+    if (message === 'Maximum attempts reached') {
+      await recordsReq.run(() => getStudentTaskRecords(taskId.value))
+      toast.push(studentTaskAvailabilityMessages.attempts_exhausted, 'error')
+      return
+    }
     setCurrentResult({ status: 'error', error: message })
     toast.push(message, 'error')
   }
@@ -212,6 +321,11 @@ const startRecording = async () => {
 
 const stopRecording = () => {
   if (recorder.value?.state === 'recording') {
+    if (!canStopRecording.value) {
+      toast.push('请至少录制 1.5 秒后再停止', 'warning')
+      return
+    }
+    recorder.value.requestData()
     recorder.value.stop()
   }
 }
@@ -228,7 +342,7 @@ const analyzeCurrentSentence = async (audio: Blob) => {
       refText: currentSentence.value,
       taskId: taskId.value,
       sentenceSeq: activeIndex.value,
-      lang: taskDetail.value?.language_type ?? 'fr',
+      lang: 'fr',
     })
 
     setCurrentResult({
@@ -239,9 +353,9 @@ const analyzeCurrentSentence = async (audio: Blob) => {
     })
 
     if (activeIndex.value < segments.value.length - 1) activeIndex.value += 1
-    toast.push('本句评测完成', 'success')
+    toast.push('本句已自动测评完成', 'success')
   } catch (error) {
-    const message = error instanceof Error ? error.message : '评测失败，请重试'
+    const message = error instanceof Error ? error.message : '自动测评失败，请重试'
     setCurrentResult({ status: 'error', error: message })
     toast.push(message, 'error')
   } finally {
@@ -254,6 +368,7 @@ const submitSession = async () => {
   try {
     const res = await submitReq.run(() => submitStudentTestSession(taskId.value))
     submitResult.value = res
+    await recordsReq.run(() => getStudentTaskRecords(taskId.value))
     toast.push('测试已提交', 'success')
   } catch (error) {
     const message = error instanceof Error ? error.message : '提交失败，请稍后重试'
@@ -278,7 +393,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  discardRecordingOnStop = true
   if (recorder.value?.state === 'recording') recorder.value.stop()
+  resetRecordingTimer()
   stopStream()
 })
 </script>
@@ -296,7 +413,7 @@ onUnmounted(() => {
         </button>
         <div class="flex flex-col gap-1">
           <h2 class="text-2xl font-black text-gray-900 tracking-tight">任务测试</h2>
-          <p class="text-sm font-bold text-gray-400">逐句录音评测，完成后提交本次测试记录。</p>
+          <p class="text-sm font-bold text-gray-400">逐句录音，停止后自动测评并保存测试记录。</p>
         </div>
       </div>
 
@@ -340,9 +457,9 @@ onUnmounted(() => {
               </span>
               <span
                 class="rounded-full px-3 py-1 text-xs font-black"
-                :class="taskDetail.is_active ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-500'"
+                :class="taskWindowClass"
               >
-                {{ taskDetail.is_active ? '可测试' : '未开始' }}
+                {{ taskWindowLabel }}
               </span>
             </div>
             <h3 class="text-2xl font-black text-gray-900 leading-tight">{{ taskDetail.title }}</h3>
@@ -367,6 +484,32 @@ onUnmounted(() => {
 
         <div class="h-3 rounded-full bg-gray-100 overflow-hidden">
           <div class="h-full rounded-full bg-[#70C125] transition-all" :style="progressStyle"></div>
+        </div>
+
+        <div
+          v-if="taskWindowMessage"
+          class="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm font-black text-orange-600"
+        >
+          {{ taskWindowMessage }}
+        </div>
+
+        <div class="rounded-3xl border border-gray-100 bg-[#F8F9FA] p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div class="flex flex-col gap-1">
+            <h4 class="text-base font-black text-gray-900">提交整套测试</h4>
+            <p class="text-sm font-bold text-gray-400">
+              {{ allSentencesCompleted ? '所有句子已完成测评，可以提交本次测试记录。' : `还需完成 ${segments.length - completedCount} 句测评后才能提交。` }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="rounded-2xl bg-[#3B82F6] px-6 py-4 text-sm font-black text-white flex items-center justify-center gap-2 border-b-4 border-[#2563EB] hover:bg-[#2563eb] active:border-b-0 active:translate-y-1 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-[#3B82F6]"
+            :disabled="!canSubmit"
+            @click="submitSession"
+          >
+            <Loader2 v-if="submitReq.loading.value" class="w-5 h-5 animate-spin" />
+            <Send v-else class="w-5 h-5" />
+            提交测试
+          </button>
         </div>
       </section>
 
@@ -423,8 +566,16 @@ onUnmounted(() => {
             </div>
 
             <div class="flex items-center justify-between gap-3">
-              <span class="text-xs font-black text-gray-400">
+              <span
+                class="text-xs font-black"
+                :class="results[item.index]?.status === 'error' ? 'text-orange-600' : 'text-gray-400'"
+              >
+                <template v-if="results[item.index]?.status === 'error'">
+                  {{ results[item.index]?.error || '评测失败，请重试' }}
+                </template>
+                <template v-else>
                 {{ activeIndex === item.index ? '当前录音句' : '点击选择' }}
+                </template>
               </span>
               <span v-if="results[item.index]?.score !== null" class="text-base font-black text-[#70C125]">
                 {{ results[item.index]?.score?.toFixed(1) }} 分
@@ -471,11 +622,11 @@ onUnmounted(() => {
             <button
               type="button"
               class="rounded-2xl bg-[#FF80B5] px-6 py-4 text-sm font-black text-white flex items-center gap-2 border-b-4 border-[#D16A95] hover:bg-[#e673a3] active:border-b-0 active:translate-y-1 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-[#FF80B5]"
-              :disabled="!recording"
+              :disabled="!canStopRecording"
               @click="stopRecording"
             >
               <Square class="w-5 h-5" />
-              停止并评测
+              {{ stopRecordingLabel }}
             </button>
             <button
               type="button"
@@ -490,7 +641,7 @@ onUnmounted(() => {
 
           <div v-if="analyzing" class="flex items-center gap-2 text-sm font-black text-blue-600">
             <Loader2 class="w-4 h-4 animate-spin" />
-            正在评测当前句子
+            正在自动测评当前句子
           </div>
           <div v-else-if="results[activeIndex]?.status === 'done'" class="flex items-center gap-2 text-sm font-black text-[#70C125]">
             <CheckCircle2 class="w-4 h-4" />
@@ -515,23 +666,6 @@ onUnmounted(() => {
             <div class="text-xs font-black text-gray-400 mb-1">已评测</div>
             <div class="text-2xl font-black text-gray-900">{{ completedCount }} 句</div>
           </div>
-        </div>
-
-        <div class="rounded-3xl border border-gray-100 bg-white p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div class="flex flex-col gap-1">
-            <h4 class="text-base font-black text-gray-900">提交本次测试</h4>
-            <p class="text-sm font-bold text-gray-400">至少完成一句评测后即可提交，提交后会生成练习记录。</p>
-          </div>
-          <button
-            type="button"
-            class="rounded-2xl bg-[#3B82F6] px-6 py-4 text-sm font-black text-white flex items-center justify-center gap-2 border-b-4 border-[#2563EB] hover:bg-[#2563eb] active:border-b-0 active:translate-y-1 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-[#3B82F6]"
-            :disabled="!canSubmit"
-            @click="submitSession"
-          >
-            <Loader2 v-if="submitReq.loading.value" class="w-5 h-5 animate-spin" />
-            <Send v-else class="w-5 h-5" />
-            提交测试
-          </button>
         </div>
 
         <div v-if="submitResult" class="rounded-3xl border border-[#DCEFCC] bg-[#F8FCF4] p-5 flex flex-col gap-3">

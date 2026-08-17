@@ -1,7 +1,8 @@
-import { request } from './http'
+import { request, requestBlob } from './http'
 
 export type LoginForm = {
   institute: string
+  school_seq: string
   user_type: 'Student' | 'Teacher'
   stu_id: string
   password: string
@@ -10,6 +11,7 @@ export type LoginForm = {
 export type LoginResponse = {
   access_token: string
   token_type: string
+  must_change_password: boolean
   user: {
     user_id: string
     user_type: string
@@ -24,7 +26,32 @@ export async function logout() {
   return request<unknown>('auth/logout', { method: 'POST' })
 }
 
+export type EditPasswordPayload = {
+  oldPassword?: string
+  password: string
+}
+
+export type EditPasswordResponse = {
+  ok: boolean
+  access_token: string
+  token_type: string
+  must_change_password: boolean
+}
+
+export async function editUserPassword(payload: EditPasswordPayload) {
+  const body: { old_password?: string; password: string } = {
+    password: payload.password,
+  }
+  if (payload.oldPassword !== undefined) body.old_password = payload.oldPassword
+
+  return request<EditPasswordResponse>('auth/users/edit_password', {
+    method: 'PUT',
+    body,
+  })
+}
+
 export type InstituteItem = {
+  school_seq?: string
   school_id: string
   school_name: string
 }
@@ -78,8 +105,11 @@ export type StudentTaskItem = {
   target_phonemes: string[] | string | null
   created_at: string
   updated_at: string
+  available_from?: string | null
+  available_until?: string | null
   avg_score: number
   is_active: boolean
+  attempt_count?: number
 }
 
 export async function getStudentTasks(classId?: string | null) {
@@ -90,7 +120,7 @@ export async function getStudentTasks(classId?: string | null) {
 }
 
 export type StudentTaskDetail = {
-  task_id: number
+  task_id: string
   course: Array<{
     class_id: string
     class_name: string
@@ -112,7 +142,7 @@ export type StudentTaskDetail = {
 export async function getStudentTaskDetail(taskId: string | number) {
   return request<{ ok: boolean; data: StudentTaskDetail }>('student/task_detail', {
     method: 'GET',
-    query: { task_id: taskId },
+    query: { task_id: String(taskId) },
   })
 }
 
@@ -129,12 +159,13 @@ export type StudentTaskRecordItem = {
 export async function getStudentTaskRecords(taskId: string | number) {
   return request<{ tasks: StudentTaskRecordItem[] }>('student/task', {
     method: 'GET',
-    query: { task_id: taskId },
+    query: { task_id: String(taskId) },
   })
 }
 
 export type StudentSessionEvaluationItem = {
   eval_id: string
+  audio_file_id?: string | null
   line_number: number
   sentence_text: string
   pronunciation: number
@@ -208,9 +239,9 @@ export type CreateStudentTestSessionResponse = {
 }
 
 export async function createStudentTestSession(taskId: string | number) {
-  return request<CreateStudentTestSessionResponse>('student/test/create_session', {
+  return request<CreateStudentTestSessionResponse>('student/pron-test/create_session', {
     method: 'POST',
-    body: { task_id: Number(taskId) },
+    body: { task_id: taskId },
   })
 }
 
@@ -223,9 +254,9 @@ export type SubmitStudentTestSessionResponse = {
 }
 
 export async function submitStudentTestSession(taskId: string | number) {
-  return request<SubmitStudentTestSessionResponse>('student/test/submit_session', {
+  return request<SubmitStudentTestSessionResponse>('student/pron-test/submit_session', {
     method: 'POST',
-    body: { task_id: Number(taskId) },
+    body: { task_id: taskId },
   })
 }
 
@@ -253,7 +284,7 @@ export async function analyzeStudentPronTest(params: StudentPronTestAnalyzeParam
     evaluation_id: string
     audio_file_id: string
     session_id: string
-    task_id: number
+    task_id: string
     sentence_seq: number
     ref_text: string
     result_score: unknown
@@ -285,7 +316,7 @@ export async function getTeacherClasses() {
 }
 
 export type TeacherTaskItem = {
-  task_id: number
+  task_id: string
   course: Array<{ class_id: string; class_name: string }>
   task_type: 'practice' | 'homework'
   title: string
@@ -302,7 +333,7 @@ export async function getTeacherTasks() {
 }
 
 export type TeacherClassTaskSummary = {
-  task_id: number
+  task_id: string
   title: string
   finished_students_count: number
   unfinished_students: Array<{
@@ -351,7 +382,7 @@ export async function getTeacherStudentBasicInformation(userId: string | number,
 }
 
 export type TeacherStudentTaskRecord = {
-  task_id: number
+  task_id: string
   title: string
   records_count: number
   records: Array<{
@@ -371,7 +402,7 @@ export async function getTeacherStudentRecords(userId: string | number, timeRang
 export async function getTeacherTaskBasicInformation(classId: string, taskId: string | number, timeRange?: string | null) {
   return request<TeacherScoreSummary>('teacher/task/basic_information', {
     method: 'POST',
-    body: { class_id: classId, task_id: Number(taskId), time_range: timeRange ?? null },
+    body: { class_id: classId, task_id: String(taskId), time_range: timeRange ?? null },
   })
 }
 
@@ -457,7 +488,7 @@ export async function updateTeacherTask(params: UpdateTeacherTaskParams) {
   return request<{ success: boolean }>('teacher/task/save', {
     method: 'POST',
     body: {
-      task_id: Number(params.taskId),
+      task_id: String(params.taskId),
       title: params.title,
       notes: params.notes,
       max_attempt: params.maxAttempt,
@@ -471,7 +502,7 @@ export async function updateTeacherTask(params: UpdateTeacherTaskParams) {
 export async function deleteTeacherTask(taskId: string | number) {
   return request<{ success: boolean }>('teacher/task/delete', {
     method: 'POST',
-    query: { task_id: taskId },
+    query: { task_id: String(taskId) },
   })
 }
 
@@ -489,7 +520,7 @@ export type TeacherTaskRecordStudent = {
 export async function getTeacherTaskRecords(classId: string, taskId: string | number) {
   return request<TeacherTaskRecordStudent[]>('teacher/task/records', {
     method: 'POST',
-    body: { class_id: classId, task_id: Number(taskId) },
+    body: { class_id: classId, task_id: String(taskId) },
   })
 }
 
@@ -497,6 +528,13 @@ export async function getTeacherSessionDetails(userId: string | number, sessionI
   return request<StudentSessionEvaluationItem[]>('teacher/get_session', {
     method: 'POST',
     query: { user_id: userId, session_id: sessionId },
+  })
+}
+
+export async function getTeacherEvaluationAudio(evaluationId: string) {
+  return requestBlob('teacher/evaluation/audio', {
+    method: 'GET',
+    query: { evaluation_id: evaluationId },
   })
 }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import UserAccountMenu from '../UserAccountMenu.vue'
 
 defineProps<{
   title?: string
@@ -49,13 +50,11 @@ const onBack = () => {
 
     <div class="flex-1" />
 
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-3 min-w-0">
       <span class="whitespace-nowrap text-xs font-black text-[#FBFBFA] bg-[rgba(77,124,15,0.65)] rounded-full px-2.5 py-1 leading-none tracking-wider">
         教师端
       </span>
-      <div class="w-10 h-10 rounded-full border-2 border-[#58CC02] bg-[#EAF0DD] overflow-hidden shadow-sm">
-        <img src="../../assets/figma/avatar.png" alt="Avatar" class="w-full h-full object-cover rounded-full" />
-      </div>
+      <UserAccountMenu compact />
     </div>
   </header>
 </template>

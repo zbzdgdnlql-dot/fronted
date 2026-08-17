@@ -20,7 +20,7 @@ export type ApiClientConfig = {
 }
 
 const defaultConfig: ApiClientConfig = {
-  baseUrl: (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://127.0.0.1:8000',
+  baseUrl: (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api',
   timeoutMs: 10_000,
   getToken: () => localStorage.getItem('token'),
 }
@@ -114,6 +114,63 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (res.status >= 200 && res.status < 400) {
       return (await parseResponseBody(res)) as T
     }
+
+    const parsed = await parseResponseBody(res).catch(() => null)
+    if (res.status === 401) clientConfig.onUnauthorized?.()
+
+    const message =
+      typeof parsed === 'object' && parsed && 'message' in (parsed as any)
+        ? String((parsed as any).message)
+        : typeof parsed === 'object' && parsed && 'detail' in (parsed as any)
+          ? Array.isArray((parsed as any).detail)
+            ? (parsed as any).detail.map((item: any) => item?.msg ?? String(item)).join('；')
+            : String((parsed as any).detail)
+          : messageFromStatus(res.status)
+
+    const code =
+      typeof parsed === 'object' && parsed && 'code' in (parsed as any) ? String((parsed as any).code) : undefined
+
+    throw new ApiError(message, res.status, code, parsed)
+  } catch (err: any) {
+    if (err?.name === 'AbortError') throw new ApiError('请求超时，请检查网络后重试', 0)
+    if (err instanceof ApiError) throw err
+    throw new ApiError('网络异常，请检查网络后重试', 0, undefined, err)
+  } finally {
+    cleanup()
+  }
+}
+
+export async function requestBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+  const method = options.method ?? 'GET'
+  const url = buildUrl(path, options.query)
+
+  const headers: Record<string, string> = {
+    ...(options.headers ?? {}),
+  }
+
+  const token = clientConfig.getToken()
+  if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`
+
+  let body: BodyInit | undefined
+  if (options.body instanceof FormData) {
+    body = options.body
+  } else if (options.body !== undefined && method !== 'GET') {
+    headers['Content-Type'] = headers['Content-Type'] ?? 'application/json'
+    body = headers['Content-Type'].includes('application/json') ? JSON.stringify(options.body) : (options.body as any)
+  }
+
+  const { signal, cleanup } = withTimeout(options.timeoutMs ?? clientConfig.timeoutMs, options.signal)
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body,
+      signal,
+      credentials: options.credentials ?? 'same-origin',
+    })
+
+    if (res.status >= 200 && res.status < 400) return await res.blob()
 
     const parsed = await parseResponseBody(res).catch(() => null)
     if (res.status === 401) clientConfig.onUnauthorized?.()

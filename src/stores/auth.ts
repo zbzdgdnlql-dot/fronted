@@ -11,6 +11,7 @@ export type UserType = 'student' | 'teacher' | 'admin' | 'guest' | string
 export type Session = {
   user_id: string
   user_type: UserType
+  must_change_password?: boolean
   class_context?: ClassContext
   class_contexts?: ClassContext[]
 }
@@ -42,6 +43,7 @@ const state = reactive<{ session: Session | null }>({
 export function useAuth() {
   const isAuthed = computed(() => !!state.session?.user_id)
   const userType = computed(() => state.session?.user_type)
+  const mustChangePassword = computed(() => !!state.session?.must_change_password)
   const className = computed(() => state.session?.class_context?.class_name)
   const classContexts = computed(() => state.session?.class_contexts ?? (state.session?.class_context ? [state.session.class_context] : []))
 
@@ -62,6 +64,15 @@ export function useAuth() {
     persistSession(state.session)
   }
 
+  const markPasswordChanged = () => {
+    if (!state.session) return
+    state.session = {
+      ...state.session,
+      must_change_password: false,
+    }
+    persistSession(state.session)
+  }
+
   const clearSession = () => {
     state.session = null
     persistSession(null)
@@ -71,10 +82,12 @@ export function useAuth() {
     session: computed(() => state.session),
     isAuthed,
     userType,
+    mustChangePassword,
     className,
     classContexts,
     setSession,
     setCurrentClass,
+    markPasswordChanged,
     clearSession,
   }
 }

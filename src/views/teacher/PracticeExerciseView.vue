@@ -1,23 +1,32 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { getTeacherTasks, type TeacherTaskItem } from '../../api/endpoints'
+import { useAsync } from '../../composables/useAsync'
+import ErrorState from '../../components/ErrorState.vue'
+import SkeletonBlock from '../../components/SkeletonBlock.vue'
 
 const router = useRouter()
 const filterText = ref('')
-
-interface PracticeExercise {
-  id: string
-  title: string
-  mode: string
-  sentenceCount: number
-  createdAt: string
-  status: 'published' | 'draft'
-}
-
-const exercises = ref<PracticeExercise[]>([])
+const req = useAsync<TeacherTaskItem[]>()
+const exercises = ref<TeacherTaskItem[]>([])
 
 const statusLabels: Record<string, string> = { published: '已发布', draft: '草稿' }
 const statusColors: Record<string, string> = { published: 'bg-[#F2F5E8] text-[#356B00]', draft: 'bg-[#F1F5F9] text-[#64748B]' }
+
+const filteredExercises = computed(() => {
+  const key = filterText.value.trim().toLowerCase()
+  if (!key) return exercises.value
+  return exercises.value.filter((item) => item.title.toLowerCase().includes(key))
+})
+
+const load = async () => {
+  exercises.value = await req.run(() => getTeacherTasks())
+}
+
+onMounted(() => {
+  void load()
+})
 </script>
 
 <template>
@@ -49,10 +58,19 @@ const statusColors: Record<string, string> = { published: 'bg-[#F2F5E8] text-[#3
       </div>
     </div>
 
-    <div class="flex flex-col gap-4">
+    <ErrorState
+      v-if="req.error.value"
+      :message="req.error.value"
+      :busy="req.loading.value"
+      @retry="load"
+    />
+
+    <div v-else class="flex flex-col gap-4">
       <h3 class="text-base font-black text-[#1F2937]">练习列表</h3>
 
-      <div v-if="exercises.length === 0" class="flex flex-col items-center gap-4 py-12">
+      <SkeletonBlock v-if="req.loading.value" class="h-24 w-full" />
+
+      <div v-else-if="filteredExercises.length === 0" class="flex flex-col items-center gap-4 py-12">
         <div class="w-20 h-20 rounded-full bg-[#F1F5F9] flex items-center justify-center">
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5" stroke-linecap="round">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
@@ -66,19 +84,26 @@ const statusColors: Record<string, string> = { published: 'bg-[#F2F5E8] text-[#3
       </div>
 
       <div
-        v-for="exercise in exercises"
-        :key="exercise.id"
+        v-for="exercise in filteredExercises"
+        :key="exercise.task_id"
         class="flex items-center justify-between bg-white rounded-lg border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 hover:border-[#58CC02]/20 transition-colors"
       >
         <div class="flex flex-col gap-1">
           <h4 class="text-sm font-black text-[#1F2937]">{{ exercise.title }}</h4>
-          <p class="text-xs font-bold text-[#9CA3AF]">{{ exercise.sentenceCount }} 个句子 · {{ exercise.createdAt }}</p>
+          <p class="text-xs font-bold text-[#9CA3AF]">
+            {{ exercise.segments.length }} 个句子 · {{ exercise.course.map((item) => item.class_name).join('、') || '未关联班级' }}
+          </p>
         </div>
         <div class="flex items-center gap-3">
-          <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black', statusColors[exercise.status]]">
-            {{ statusLabels[exercise.status] }}
+          <span :class="['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black', statusColors.published]">
+            {{ statusLabels.published }} · {{ exercise.task_type === 'homework' ? '作业' : '练习' }}
           </span>
-          <button class="text-xs font-bold text-[#356B00] hover:underline">编辑</button>
+          <button
+            class="text-xs font-bold text-[#356B00] hover:underline"
+            @click="router.push({ path: '/teacher/submissions', query: { taskId: exercise.task_id, classId: exercise.course[0]?.class_id } })"
+          >
+            查看提交
+          </button>
         </div>
       </div>
     </div>

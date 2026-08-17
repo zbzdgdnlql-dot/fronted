@@ -1,27 +1,143 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getTeacherDashboard, getTeacherClassContents } from '../../api/endpoints'
-import type { TeacherDashboardResponse, TeacherContentItem } from '../../api/endpoints'
+import { deleteTeacherTask, getTeacherClasses, getTeacherDashboard, getTeacherTasks, updateTeacherTask } from '../../api/endpoints'
+import type { TeacherClassItem, TeacherDashboardResponse, TeacherContentItem } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
+import { useToast } from '../../composables/useToast'
 import ErrorState from '../../components/ErrorState.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 
 const router = useRouter()
+const toast = useToast()
 const dashReq = useAsync<TeacherDashboardResponse>()
+const classesReq = useAsync<TeacherClassItem[]>()
+const tasksReq = useAsync<TeacherContentItem[]>()
+const updateReq = useAsync<{ success: boolean }>()
 const dashData = ref<TeacherDashboardResponse | null>(null)
+const classes = ref<TeacherClassItem[]>([])
 const contentList = ref<TeacherContentItem[]>([])
+const selectedClassId = ref('all')
+const editingTask = ref<TeacherContentItem | null>(null)
+const editTitle = ref('')
+const editNotes = ref('')
+const editMaxAttempt = ref<number | null>(null)
+const editAvailableFrom = ref('')
+const editAvailableUntil = ref('')
 
 onMounted(load)
 
 async function load() {
-  dashData.value = await dashReq.run(async () => getTeacherDashboard())
-  if (dashData.value) {
-    try {
-      const res = await getTeacherClassContents('mock-class-001')
-      contentList.value = res.content_list ?? []
-    } catch {}
+  const [dashboard, classRows, taskRows] = await Promise.all([
+    dashReq.run(() => getTeacherDashboard()),
+    classesReq.run(() => getTeacherClasses()),
+    tasksReq.run(() => getTeacherTasks()),
+  ])
+  dashData.value = dashboard
+  classes.value = classRows
+  contentList.value = taskRows
+}
+
+const filteredContentList = computed(() => {
+  if (selectedClassId.value === 'all') return contentList.value
+  return contentList.value.filter((item) => item.course.some((course) => course.class_id === selectedClassId.value))
+})
+
+const removeTask = async (taskId: number) => {
+  try {
+    await deleteTeacherTask(taskId)
+    contentList.value = contentList.value.filter((item) => item.task_id !== taskId)
+    toast.push('任务已删除', 'success')
+  } catch {
+    toast.push('删除失败，请稍后重试', 'error')
   }
+}
+
+const toLocalInputValue = (value: string | null) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+const toIso = (value: string) => {
+  if (!value) return null
+  return new Date(value).toISOString()
+}
+
+const sameInstant = (left: string | null, right: string | null) => {
+  if (!left && !right) return true
+  if (!left || !right) return false
+  return new Date(left).getTime() === new Date(right).getTime()
+}
+
+const openEditTask = (task: TeacherContentItem) => {
+  editingTask.value = task
+  editTitle.value = task.title ?? ''
+  editNotes.value = task.notes ?? ''
+  editMaxAttempt.value = task.max_attempt ?? null
+  editAvailableFrom.value = toLocalInputValue(task.available_from)
+  editAvailableUntil.value = toLocalInputValue(task.available_until)
+}
+
+const closeEditTask = () => {
+  if (updateReq.loading.value) return
+  editingTask.value = null
+}
+
+const saveTaskChanges = async () => {
+  const task = editingTask.value
+  if (!task) return
+  const title = editTitle.value.trim()
+  if (!title) {
+    toast.push('请输入任务标题', 'warning')
+    return
+  }
+  const availableFrom = toIso(editAvailableFrom.value)
+  const availableUntil = toIso(editAvailableUntil.value)
+  if (availableFrom && availableUntil && new Date(availableFrom).getTime() >= new Date(availableUntil).getTime()) {
+    toast.push('截止时间需要晚于开始时间', 'warning')
+    return
+  }
+
+  const changes: Parameters<typeof updateTeacherTask>[0] = { taskId: task.task_id }
+  if (title !== (task.title ?? '')) changes.title = title
+  const notes = editNotes.value.trim() || null
+  if (notes !== (task.notes ?? null)) changes.notes = notes
+  if (editMaxAttempt.value !== (task.max_attempt ?? null)) changes.maxAttempt = editMaxAttempt.value
+  if (!sameInstant(availableFrom, task.available_from)) changes.availableFrom = availableFrom
+  if (!sameInstant(availableUntil, task.available_until)) changes.availableUntil = availableUntil
+
+  if (Object.keys(changes).length === 1) {
+    toast.push('没有需要保存的变更', 'info')
+    return
+  }
+
+  try {
+    await updateReq.run(() => updateTeacherTask(changes))
+    contentList.value = contentList.value.map((item) => (
+      item.task_id === task.task_id
+        ? {
+            ...item,
+            title: changes.title ?? item.title,
+            notes: changes.notes !== undefined ? changes.notes : item.notes,
+            max_attempt: changes.maxAttempt !== undefined ? changes.maxAttempt : item.max_attempt,
+            available_from: changes.availableFrom !== undefined ? changes.availableFrom : item.available_from,
+            available_until: changes.availableUntil !== undefined ? changes.availableUntil : item.available_until,
+          }
+        : item
+    ))
+    toast.push('任务已更新', 'success')
+    editingTask.value = null
+  } catch {
+    toast.push(updateReq.error.value ?? '更新失败，请稍后重试', 'error')
+  }
+}
+
+const formatDate = (value: string | null) => {
+  if (!value) return '-'
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
 const statCards = [
@@ -31,7 +147,7 @@ const statCards = [
   { label: '待处理', key: null as null, color: '#BA1A1A', fallback: '-' },
 ]
 
-const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', '操作']
+const tableHeaders = ['内容标题', '所属班级', '截止时间', '类型', '操作']
 </script>
 
 <template>
@@ -49,108 +165,32 @@ const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', 
           <h2 class="text-2xl font-black text-[#1F2937] tracking-tight">内容管理</h2>
           <p class="text-sm font-bold text-[#9CA3AF] mt-1">管理和发布教学练习内容</p>
         </div>
-        <button
-          type="button"
-          class="bg-[#70C125] text-white px-5 py-3 rounded-2xl font-black text-sm flex items-center gap-2 hover:bg-[#63ad20] border-b-4 border-[#5E9E1A] active:border-b-0 active:translate-y-1 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-          :disabled="!selectedClassId"
-          @click="openCreate"
-        >
-          <Plus class="w-5 h-5" />
-          创建练习
-        </button>
-      </div>
-
-      <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        <label class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-2">
-          <span class="text-xs font-black text-gray-400 uppercase tracking-widest">班级</span>
-          <select
-            v-model="selectedClassId"
-            class="w-full bg-transparent outline-none text-sm font-bold text-gray-800"
-            @change="loadContents"
-          >
-            <option v-for="c in classes" :key="c.class_id" :value="c.class_id">
-              {{ c.class_name }}
-            </option>
-          </select>
-        </label>
-
-        <label class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-2 lg:col-span-2">
-          <span class="text-xs font-black text-gray-400 uppercase tracking-widest">练习标题</span>
-          <div class="flex items-center gap-2">
-            <Search class="w-4 h-4 text-gray-400" />
-            <input
-              v-model="filters.title"
-              class="w-full bg-transparent outline-none text-sm font-bold text-gray-800 placeholder:text-gray-400"
-              placeholder="输入标题"
-            />
-          </div>
-        </label>
-
-        <label class="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 flex flex-col gap-2">
-          <span class="text-xs font-black text-gray-400 uppercase tracking-widest">练习类型</span>
-          <select
-            v-model="filters.type"
-            class="w-full bg-transparent outline-none text-sm font-bold text-gray-800"
-          >
-            <option value="所有类型">所有类型</option>
-            <option value="句子练习">句子练习</option>
-            <option value="单词练习">单词练习</option>
-            <option value="综合作业">综合作业</option>
-          </select>
-        </label>
-      </div>
-    </section>
-
-    <ErrorState
-      v-if="contentsReq.error.value"
-      title="加载失败"
-      message="无法获取班级内容列表，请稍后重试。"
-      :busy="contentsReq.loading.value"
-      @retry="loadContents"
-    />
-
-    <section v-else class="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 md:p-8 flex flex-col gap-6">
-      <div class="flex items-center justify-between flex-wrap gap-4">
-        <h3 class="text-lg font-black text-gray-900">已有练习列表</h3>
-        <p class="text-sm font-bold text-gray-400">已显示所有 {{ filteredPractices.length }} 个练习项目</p>
-      </div>
-
-      <div v-if="contentsReq.loading.value" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <SkeletonBlock class="h-36 w-full" />
-        <SkeletonBlock class="h-36 w-full" />
-        <SkeletonBlock class="h-36 w-full" />
-      </div>
-
-      <div v-else class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div
-          v-for="practice in filteredPractices"
-          :key="practice.id"
-          class="bg-[#F8F9FA] border border-gray-100 rounded-3xl p-6 flex flex-col gap-4 hover:bg-gray-50 transition-colors"
-        >
-          <div class="flex items-start justify-between gap-3">
-            <div class="flex flex-col gap-1">
-              <h4 class="text-lg font-extrabold text-gray-900">{{ practice.title }}</h4>
-              <div class="text-sm font-bold text-gray-400">ID: {{ practice.id }}</div>
-            </div>
-            <div class="px-3 py-1.5 rounded-full bg-white border border-gray-100 text-xs font-black text-gray-500">
-              {{ practice.type }}
-            </div>
-          </div>
-
-          <div class="flex flex-col gap-2">
-            <div v-if="practice.attemptsLimit" class="text-sm font-bold text-gray-600">
-              次数限制 {{ practice.attemptsLimit }}
-            </div>
-            <div class="text-sm font-bold text-gray-600">创建于 {{ practice.createdAt }}</div>
-          </div>
-
+        <div class="flex items-center gap-3">
           <button
             type="button"
-            class="mt-auto bg-white border border-gray-100 rounded-2xl px-4 py-3 flex items-center justify-between hover:border-blue-200 hover:bg-blue-50 transition-colors"
-            @click="openSubmissions(practice.id)"
+            class="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#E2E8F0] bg-white text-sm font-bold text-[#475569] hover:bg-[#F8FAFC] shadow-sm transition-colors"
           >
-            <span class="text-sm font-black text-blue-600">查看提交</span>
-            <ChevronRight class="w-5 h-5 text-blue-600" />
+            <select v-model="selectedClassId" class="bg-transparent outline-none">
+              <option value="all">全部班级</option>
+              <option v-for="item in classes" :key="item.class_id" :value="item.class_id">
+                {{ item.class_name }}
+              </option>
+            </select>
+          </button>
+          <button
+            type="button"
+            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#F2F5E8] text-sm font-bold text-[#356B00] hover:bg-[#E5EED3] shadow-sm transition-colors"
+            @click="router.push('/teacher/assignments/create')"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            创建新内容
+          </button>
+          <button
+            type="button"
+            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#356B00] text-white text-sm font-bold hover:bg-[#2E5E00] shadow-sm transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>
+            导入
           </button>
         </div>
       </div>
@@ -198,33 +238,44 @@ const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', 
             </tr>
           </thead>
           <tbody>
-            <tr v-if="contentList.length === 0 && !dashReq.loading.value">
+            <tr v-if="filteredContentList.length === 0 && !tasksReq.loading.value">
               <td :colspan="tableHeaders.length" class="text-center py-16 text-sm font-bold text-[#9CA3AF]">
                 暂无内容，点击「创建新内容」开始
               </td>
             </tr>
+            <tr v-if="tasksReq.loading.value">
+              <td :colspan="tableHeaders.length" class="px-6 py-6">
+                <SkeletonBlock class="h-10 w-full" />
+              </td>
+            </tr>
             <tr
-              v-for="item in contentList"
-              :key="item.content_id"
+              v-for="item in filteredContentList"
+              :key="item.task_id"
               class="border-t border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors"
             >
               <td class="px-6 py-4 text-sm font-bold text-[#1F2937]">{{ item.title || '未命名' }}</td>
-              <td class="px-6 py-4 text-sm text-[#64748B]">{{ item.created_at?.slice(0, 10) || '-' }}</td>
-              <td class="px-6 py-4 text-sm text-[#64748B]">{{ item.updated_at?.slice(0, 10) || '-' }}</td>
+              <td class="px-6 py-4 text-sm text-[#64748B]">{{ item.course.map((course) => course.class_name).join('、') || '-' }}</td>
+              <td class="px-6 py-4 text-sm text-[#64748B]">{{ formatDate(item.available_until) }}</td>
               <td class="px-6 py-4">
                 <span
                   :class="[
                     'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black',
-                    item.is_active ? 'bg-[#F2F5E8] text-[#356B00]' : 'bg-[#F1F5F9] text-[#94A3B8]',
+                    item.available_until ? 'bg-[#F2F5E8] text-[#356B00]' : 'bg-[#F1F5F9] text-[#94A3B8]',
                   ]"
                 >
-                  {{ item.is_active ? '活跃' : '停用' }}
+                  {{ item.task_type === 'homework' ? '作业' : '练习' }} · {{ item.segments.length }} 句
                 </span>
               </td>
               <td class="px-6 py-4">
                 <div class="flex items-center gap-2">
-                  <button class="text-xs font-bold text-[#356B00] hover:underline">编辑</button>
-                  <button class="text-xs font-bold text-[#94A3B8] hover:text-[#475569]">查看</button>
+                  <button
+                    class="text-xs font-bold text-[#356B00] hover:underline"
+                    @click="router.push({ path: '/teacher/submissions', query: { taskId: item.task_id, classId: selectedClassId === 'all' ? item.course[0]?.class_id : selectedClassId } })"
+                  >
+                    查看
+                  </button>
+                  <button class="text-xs font-bold text-[#01658B] hover:underline" @click="openEditTask(item)">编辑</button>
+                  <button class="text-xs font-bold text-[#BA1A1A] hover:underline" @click="removeTask(item.task_id)">删除</button>
                 </div>
               </td>
             </tr>
@@ -232,7 +283,7 @@ const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', 
         </table>
 
         <div class="flex items-center justify-between px-6 py-4 border-t border-[#F1F5F9] bg-[rgba(248,250,252,0.5)]">
-          <span class="text-sm text-[#64748B] font-bold">共 {{ contentList.length }} 项</span>
+          <span class="text-sm text-[#64748B] font-bold">共 {{ filteredContentList.length }} 项</span>
           <div class="flex items-center gap-2">
             <button class="w-8 h-8 flex items-center justify-center rounded-lg text-sm font-bold text-[#9CA3AF] hover:bg-[#F1F5F9] disabled:opacity-30" disabled>‹</button>
             <button class="w-8 h-8 flex items-center justify-center rounded-lg text-sm font-bold bg-[#F2F5E8] text-[#356B00]">1</button>
@@ -241,5 +292,109 @@ const tableHeaders = ['内容标题', '创建时间', '更新时间', '状态', 
         </div>
       </div>
     </template>
+
+    <div
+      v-if="editingTask"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
+      @click.self="closeEditTask"
+    >
+      <div class="w-full max-w-2xl rounded-xl bg-white shadow-xl border border-[#E2E8F0] overflow-hidden">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-[#F1F5F9]">
+          <div>
+            <h3 class="text-base font-black text-[#1F2937]">编辑任务</h3>
+            <p class="text-xs font-bold text-[#9CA3AF] mt-1">朗读文本发布后不可修改</p>
+          </div>
+          <button
+            type="button"
+            class="w-8 h-8 rounded-lg text-[#64748B] hover:bg-[#F8FAFC]"
+            @click="closeEditTask"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="p-6 grid grid-cols-2 gap-4">
+          <label class="col-span-2 flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">任务标题</span>
+            <input
+              v-model="editTitle"
+              type="text"
+              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+            />
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">开始时间</span>
+            <input
+              v-model="editAvailableFrom"
+              type="datetime-local"
+              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+            />
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">截止时间</span>
+            <input
+              v-model="editAvailableUntil"
+              type="datetime-local"
+              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+            />
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">最大提交次数</span>
+            <input
+              v-model.number="editMaxAttempt"
+              type="number"
+              min="1"
+              max="99"
+              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+            />
+          </label>
+
+          <label class="col-span-2 flex flex-col gap-1">
+            <span class="text-xs font-black text-[#64748B]">任务备注</span>
+            <textarea
+              v-model="editNotes"
+              class="h-20 rounded-lg border border-[#E2E8F0] p-3 text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02] resize-none"
+            />
+          </label>
+
+          <div class="col-span-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-4">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <span class="text-xs font-black text-[#64748B]">朗读文本</span>
+              <span class="text-xs font-bold text-[#9CA3AF]">{{ editingTask.segments.length }} 句</span>
+            </div>
+            <div class="max-h-36 overflow-y-auto flex flex-col gap-2">
+              <div
+                v-for="(segment, index) in editingTask.segments"
+                :key="index"
+                class="text-xs leading-relaxed text-[#475569]"
+              >
+                {{ index + 1 }}. {{ segment }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#F1F5F9]">
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#64748B] hover:bg-[#F8FAFC]"
+            @click="closeEditTask"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg bg-[#356B00] text-sm font-bold text-white hover:bg-[#2E5E00] disabled:opacity-60"
+            :disabled="updateReq.loading.value"
+            @click="saveTaskChanges"
+          >
+            {{ updateReq.loading.value ? '保存中...' : '保存修改' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

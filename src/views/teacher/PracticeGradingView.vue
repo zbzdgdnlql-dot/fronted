@@ -1,5 +1,15 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import {
+  getTeacherSessionDetails,
+  saveTeacherComments,
+  type StudentSessionEvaluationItem,
+} from '../../api/endpoints'
+import { useAsync } from '../../composables/useAsync'
+import { useToast } from '../../composables/useToast'
+import ErrorState from '../../components/ErrorState.vue'
+import SkeletonBlock from '../../components/SkeletonBlock.vue'
 
 interface SentenceResult {
   id: string
@@ -19,6 +29,10 @@ interface StudentSubmission {
   overallComment: string
 }
 
+const route = useRoute()
+const toast = useToast()
+const detailsReq = useAsync<StudentSessionEvaluationItem[]>()
+const saveReq = useAsync<{ success: boolean }>()
 const submissions = ref<StudentSubmission[]>([])
 const selectedSubmission = ref<StudentSubmission | null>(null)
 const gradingModalOpen = ref(false)
@@ -39,6 +53,57 @@ const activeSentence = computed(() => {
   if (!selectedSubmission.value) return null
   return selectedSubmission.value.sentences[activeSentenceIdx.value] ?? null
 })
+
+const meta = computed(() => ({
+  userId: route.query.userId as string | undefined,
+  sessionId: route.query.sessionId as string | undefined,
+  taskId: route.query.taskId as string | undefined,
+}))
+
+const mapDetails = (details: StudentSessionEvaluationItem[]) => {
+  const submission: StudentSubmission = {
+    id: meta.value.sessionId ?? 'session',
+    studentName: meta.value.userId ? `学生 ${meta.value.userId}` : '学生',
+    contentTitle: meta.value.taskId ? `任务 ${meta.value.taskId}` : '练习内容',
+    score: details.length ? details.reduce((sum, item) => sum + item.total_score, 0) / details.length : null,
+    status: 'pending',
+    submittedAt: details[0]?.created_at ?? '-',
+    sentences: details.map((item) => ({
+      id: item.eval_id,
+      text: item.sentence_text,
+      score: Math.round(item.total_score / 20) || 1,
+      teacherComment: item.teacher_notes ?? '',
+    })),
+    overallComment: '',
+  }
+  submissions.value = [submission]
+  openGrading(submission)
+}
+
+const load = async () => {
+  if (!meta.value.userId || !meta.value.sessionId) return
+  const details = await detailsReq.run(() => getTeacherSessionDetails(meta.value.userId!, meta.value.sessionId!))
+  mapDetails(details)
+}
+
+const submitFeedback = async () => {
+  if (!selectedSubmission.value || !meta.value.sessionId) return
+  const comment = {
+    [meta.value.sessionId]: {
+      comment: selectedSubmission.value.overallComment,
+      evaluations: Object.fromEntries(
+        selectedSubmission.value.sentences.map((item) => [item.id, item.teacherComment]),
+      ),
+    },
+  }
+  await saveReq.run(() => saveTeacherComments(comment))
+  toast.push('评语已提交', 'success')
+  selectedSubmission.value.status = 'graded'
+}
+
+onMounted(() => {
+  void load()
+})
 </script>
 
 <template>
@@ -49,6 +114,13 @@ const activeSentence = computed(() => {
         <p class="text-sm font-bold text-[#9CA3AF] mt-1">逐句评价学生的发音练习</p>
       </div>
     </div>
+
+    <ErrorState
+      v-if="detailsReq.error.value"
+      :message="detailsReq.error.value"
+      :busy="detailsReq.loading.value"
+      @retry="load"
+    />
 
     <div class="flex gap-8">
       <div class="flex-1">
@@ -61,7 +133,11 @@ const activeSentence = computed(() => {
             <span class="text-xs font-black text-[#64748B] uppercase tracking-wider">操作</span>
           </div>
 
-          <div v-if="submissions.length === 0" class="py-20 text-center">
+          <div v-if="detailsReq.loading.value" class="p-6">
+            <SkeletonBlock class="h-12 w-full" />
+          </div>
+
+          <div v-else-if="submissions.length === 0" class="py-20 text-center">
             <div class="w-16 h-16 rounded-full bg-[#F1F5F9] mx-auto flex items-center justify-center mb-4">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
             </div>
@@ -156,7 +232,13 @@ const activeSentence = computed(() => {
             </div>
             <div class="flex items-center gap-3">
               <button class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#475569] hover:bg-[#F8FAFC] transition-colors">保存草稿</button>
-              <button class="px-4 py-2 rounded-lg bg-[#356B00] text-white text-sm font-bold hover:bg-[#2E5E00] transition-colors">提交评分</button>
+              <button
+                class="px-4 py-2 rounded-lg bg-[#356B00] text-white text-sm font-bold hover:bg-[#2E5E00] transition-colors disabled:opacity-60"
+                :disabled="saveReq.loading.value"
+                @click="submitFeedback"
+              >
+                {{ saveReq.loading.value ? '提交中...' : '提交评分' }}
+              </button>
             </div>
           </div>
 
@@ -187,7 +269,7 @@ const activeSentence = computed(() => {
             <div class="flex flex-col gap-3">
               <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">教师评语</span>
               <textarea
-                :value="activeSentence.teacherComment"
+                v-model="activeSentence.teacherComment"
                 class="w-full h-32 rounded-xl border border-[#E2E8F0] p-4 text-sm text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none"
                 placeholder="输入对该句子的评价..."
               />
@@ -197,7 +279,7 @@ const activeSentence = computed(() => {
           <div v-if="selectedSubmission" class="mt-auto pt-6 border-t border-[#F1F5F9]">
             <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">总体评价</span>
             <textarea
-              :value="selectedSubmission.overallComment"
+              v-model="selectedSubmission.overallComment"
               class="w-full h-24 rounded-xl border border-[#E2E8F0] p-4 text-sm text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none mt-3"
               placeholder="输入总体评语..."
             />

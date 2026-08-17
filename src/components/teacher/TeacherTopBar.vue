@@ -49,9 +49,9 @@ const onBack = () => {
 
     <div class="flex-1" />
 
-    <div class="relative flex items-center">
-      <span class="absolute right-12 top-1/2 -translate-y-1/2 text-xs font-black text-[#FBFBFA] bg-[rgba(77,124,15,0.65)] rounded-full px-2 py-0.5 leading-tight tracking-wider z-10">
-        教师版
+    <div class="flex items-center gap-3">
+      <span class="whitespace-nowrap text-xs font-black text-[#FBFBFA] bg-[rgba(77,124,15,0.65)] rounded-full px-2.5 py-1 leading-none tracking-wider">
+        教师端
       </span>
       <div class="w-10 h-10 rounded-full border-2 border-[#58CC02] bg-[#EAF0DD] overflow-hidden shadow-sm">
         <img src="../../assets/figma/avatar.png" alt="Avatar" class="w-full h-full object-cover rounded-full" />

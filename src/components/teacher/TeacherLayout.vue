@@ -12,7 +12,11 @@ const showStatisticsPicker = ref(false)
 
 const showBack = computed(() => {
   if (route.path.startsWith('/teacher/statistics')) return false
-  return route.path !== '/teacher/overview' && route.path !== '/teacher/content'
+  return (
+    route.path !== '/teacher/overview' &&
+    route.path !== '/teacher/content' &&
+    route.path !== '/teacher/templates'
+  )
 })
 
 const pageTitle = computed(() => {
@@ -20,6 +24,7 @@ const pageTitle = computed(() => {
   const map: Record<string, string> = {
     '/teacher/overview': '概览',
     '/teacher/content': '内容管理',
+    '/teacher/templates': '模板库',
     '/teacher/exercise': '练习管理',
     '/teacher/assignments/create': '创建作业',
     '/teacher/submissions': '批改作业',

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ChevronLeft, Plus, Users, BookOpen, CalendarDays } from 'lucide-vue-next'
+import { computed, onMounted } from 'vue'
+import { ChevronLeft, Users } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { getTeacherClasses, type TeacherClassItem } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
@@ -14,10 +14,6 @@ const classes = computed(() => classesReq.data.value ?? [])
 
 const load = async () => {
   await classesReq.run(() => getTeacherClasses())
-}
-
-const navigateToOrganize = (classId: string) => {
-  router.push(`/teacher/classes/${classId}/organize`)
 }
 
 onMounted(() => {
@@ -76,8 +72,7 @@ onMounted(() => {
         <div class="col-span-3">班级名称</div>
         <div class="col-span-2">学生数</div>
         <div class="col-span-2">作业数</div>
-        <div class="col-span-3">创建时间</div>
-        <div class="col-span-2 text-right">操作</div>
+        <div class="col-span-5">创建时间</div>
       </div>
 
       <!-- Table Rows -->
@@ -97,16 +92,7 @@ onMounted(() => {
         </div>
         <div class="col-span-2 text-sm font-bold text-gray-700">{{ cls.student_count }}</div>
         <div class="col-span-2 text-sm font-bold text-gray-700">{{ cls.task_count }}</div>
-        <div class="col-span-3 text-sm font-bold text-gray-400">{{ cls.created_at || '--' }}</div>
-        <div class="col-span-2 text-right flex items-center justify-end gap-2">
-          <button
-            type="button"
-            class="px-4 py-2 rounded-2xl bg-[#F4FAEE] text-[#70C125] text-sm font-black hover:bg-[#EAF0DD] transition-colors"
-            @click="navigateToOrganize(cls.class_id)"
-          >
-            管理成员
-          </button>
-        </div>
+        <div class="col-span-5 text-sm font-bold text-gray-400">{{ cls.created_at || '--' }}</div>
       </div>
     </section>
   </main>

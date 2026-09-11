@@ -7,6 +7,7 @@ const route = useRoute()
 const sideLinks = [
   { name: '概览', path: '/teacher/overview', icon: 'overview' },
   { name: '内容管理', path: '/teacher/content', icon: 'content' },
+  { name: '模板库', path: '/teacher/templates', icon: 'templates' },
   { name: '布置作业', path: '/teacher/assignments/create', icon: 'assignment' },
   { name: '批改作业', path: '/teacher/submissions', icon: 'grading' },
 ]
@@ -28,7 +29,7 @@ const emit = defineEmits<{
         :class="[
           'flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors',
           isActive(link.path)
-            ? 'bg-[#58CC02]/10 text-[#356B00]'
+            ? 'bg-[#F4FAEE] text-[#5E9E1A]'
             : 'text-[#475569] hover:bg-[#E2E8F0]/50 hover:text-[#334155]',
         ]"
       >
@@ -41,6 +42,11 @@ const emit = defineEmits<{
           </svg>
           <svg v-else-if="link.icon === 'content'" width="18" height="18" viewBox="0 0 18 18" fill="none">
             <path d="M2 4h14v1H2V4Zm0 4h14v1H2V8Zm0 4h10v1H2v-1Zm0 4h12v1H2v-1Z" fill="currentColor" />
+          </svg>
+          <svg v-else-if="link.icon === 'templates'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 5a2 2 0 0 1 2-2h2v18H6a2 2 0 0 1-2-2V5Z" />
+            <path d="M11 3v18h7a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-7Z" />
+            <path d="M14 7h3M14 11h3" />
           </svg>
           <svg v-else-if="link.icon === 'assignment'" width="19" height="21" viewBox="0 0 19 21" fill="none">
             <path d="M5 3h9a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.5" />

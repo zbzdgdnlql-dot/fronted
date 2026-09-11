@@ -1,9 +1,11 @@
 import { request, requestBlob } from './http'
+import { ApiError } from './errors'
+import type { StudentTaskApiStatus } from '../utils/studentTaskAvailability'
 
 export type LoginForm = {
   institute: string
   school_seq: string
-  user_type: 'Student' | 'Teacher'
+  user_type: 'Student' | 'Teacher' | 'Admin'
   stu_id: string
   password: string
 }
@@ -100,6 +102,8 @@ export type StudentTaskItem = {
   task_id: string
   class_id: string
   task_type: 'practice' | 'homework'
+  /** 后端权威任务状态；列表接口不返回 available_from / available_until，状态判断以本字段为准 */
+  task_status?: StudentTaskApiStatus
   title: string
   segmented_sentences: string[]
   max_submission: number
@@ -120,6 +124,33 @@ export async function getStudentTasks(classId?: string | null) {
   })
 }
 
+/**
+ * 练习模式：
+ * - sentence 句子模式：正常评测
+ * - word     单词模式：仅评测音准
+ * - pair     词对模式：对照练习含相同音素的单词
+ *
+ * 后端 tasks / task_templates 表没有 mode 字段，教师端保存时的额外字段会被
+ * 直接丢弃，因此模式借道任务备注 notes，以 `[[mode:word]]` 前缀透传给前端。
+ */
+export type TaskMode = 'sentence' | 'word' | 'pair'
+
+const TASK_MODE_PREFIX = /^\s*\[\[mode:(sentence|word|pair)\]\]\s*/
+
+export function encodeTaskNotes(notes: string | null | undefined, mode: TaskMode = 'sentence') {
+  const clean = (notes ?? '').trim().replace(TASK_MODE_PREFIX, '').trim()
+  if (mode === 'sentence') return clean || null
+  return `[[mode:${mode}]]${clean}`
+}
+
+export function decodeTaskNotes(raw: string | null | undefined): { mode: TaskMode; notes: string | null } {
+  const value = raw ?? ''
+  const matched = value.match(TASK_MODE_PREFIX)
+  if (!matched) return { mode: 'sentence', notes: value.trim() || null }
+  const rest = value.slice(matched[0].length).trim()
+  return { mode: matched[1] as TaskMode, notes: rest || null }
+}
+
 export type StudentTaskDetail = {
   task_id: string
   course: Array<{
@@ -131,6 +162,7 @@ export type StudentTaskDetail = {
   title: string
   segments: string[]
   notes: string | null
+  mode?: TaskMode
   max_attempt: number | null
   target_phoneme: string[] | string | null
   is_active: boolean
@@ -141,10 +173,17 @@ export type StudentTaskDetail = {
 }
 
 export async function getStudentTaskDetail(taskId: string | number) {
-  return request<{ ok: boolean; data: StudentTaskDetail }>('student/task_detail', {
+  const res = await request<{ ok: boolean; data: StudentTaskDetail }>('student/task_detail', {
     method: 'GET',
     query: { task_id: String(taskId) },
   })
+  const detail = res?.data
+  if (detail) {
+    const { mode, notes } = decodeTaskNotes(detail.notes)
+    detail.mode = mode
+    detail.notes = notes
+  }
+  return res
 }
 
 export type StudentTaskRecordItem = {
@@ -331,20 +370,6 @@ export async function analyzeStudentPronTest(params: StudentPronTestAnalyzeParam
   }>('student/pron-test/analyze', { method: 'POST', body: fd, timeoutMs: 60_000 })
 }
 
-export type SynthesizeTextParams = {
-  text: string
-  lang?: string
-  rate?: string
-}
-
-export async function synthesizeText(params: SynthesizeTextParams) {
-  const fd = new FormData()
-  fd.set('text', params.text)
-  fd.set('lang', params.lang ?? 'fr')
-  fd.set('rate', params.rate ?? '+0%')
-  return requestBlob('student/pron-test/tts', { method: 'POST', body: fd, timeoutMs: 60_000 })
-}
-
 export type TeacherBasicInformation = {
   total_classes: number
   total_students: number
@@ -376,6 +401,7 @@ export type TeacherTaskItem = {
   title: string
   segments: string[]
   notes: string | null
+  mode?: TaskMode
   max_attempt: number | null
   target_phoneme: string[] | null
   available_from: string | null
@@ -383,7 +409,12 @@ export type TeacherTaskItem = {
 }
 
 export async function getTeacherTasks() {
-  return request<TeacherTaskItem[]>('teacher/tasks', { method: 'GET' })
+  const rows = await request<TeacherTaskItem[]>('teacher/tasks', { method: 'GET' })
+  if (!Array.isArray(rows)) return rows
+  return rows.map((item) => {
+    const { mode, notes } = decodeTaskNotes(item.notes)
+    return { ...item, mode, notes }
+  })
 }
 
 export type TeacherClassTaskSummary = {
@@ -505,6 +536,7 @@ export async function publishTeacherTask(params: {
   title: string
   segments: string[]
   notes?: string | null
+  mode?: TaskMode
   taskType: 'practice' | 'homework'
   maxAttempt?: number | null
   targetPhoneme?: string[] | null
@@ -519,7 +551,7 @@ export async function publishTeacherTask(params: {
       task_type: params.taskType,
       title: params.title,
       segments: params.segments,
-      notes: params.notes ?? null,
+      notes: encodeTaskNotes(params.notes, params.mode),
       max_attempt: params.maxAttempt ?? null,
       target_phoneme: params.targetPhoneme?.length ? params.targetPhoneme : null,
       available_from: params.availableFrom,
@@ -528,10 +560,34 @@ export async function publishTeacherTask(params: {
   })
 }
 
+/**
+ * 保存为模板：不传 course / task_id，后端据此只创建 TaskTemplate（同校公开）。
+ * 依据 service.py：task_template_id 为空 → 创建模板；course 为空 → 不创建 Task。
+ */
+export async function saveTeacherTemplate(params: {
+  title: string
+  segments: string[]
+  targetPhoneme?: string[] | null
+  isPublic?: boolean
+}) {
+  return request<{ success: boolean }>('teacher/task/save', {
+    method: 'POST',
+    body: {
+      task_id: null,
+      task_template_id: null,
+      template_title: params.title,
+      segments: params.segments,
+      target_phoneme: params.targetPhoneme?.length ? params.targetPhoneme : null,
+      is_public: params.isPublic ?? true,
+    },
+  })
+}
+
 export type UpdateTeacherTaskParams = {
   taskId: string | number
   title?: string
   notes?: string | null
+  mode?: TaskMode
   maxAttempt?: number | null
   targetPhoneme?: string[] | null
   availableFrom?: string | null
@@ -544,7 +600,7 @@ export async function updateTeacherTask(params: UpdateTeacherTaskParams) {
     body: {
       task_id: String(params.taskId),
       title: params.title,
-      notes: params.notes,
+      notes: params.notes === undefined ? undefined : encodeTaskNotes(params.notes, params.mode),
       max_attempt: params.maxAttempt,
       target_phoneme: params.targetPhoneme,
       available_from: params.availableFrom,
@@ -646,164 +702,576 @@ export async function getTeacherCustomContentRecords(taskId: string | number, cl
 }
 
 // ========================================
-// P0: 薄弱分析 — 新 API 封装
+// 管理员端 — API 封装
+// 说明：后端 /admin 仅提供基础 CRUD 路由（basic_information / teachers / classes /
+// class/students / class/create / class/edit / class/students/add / teacher/add /
+// teacher/assign / student/change_class / user/edit / user/unlink_class）。
+// 本层负责把上述真实路由组合、并做字段映射，向上层视图暴露统一结构。
 // ========================================
 
-export type SessionSentence = {
-  sentence_text: string
-  pronunciation: number
-  rhythm: number
-  fluency: number
-  completeness: number
-  total_score: number
+/** 后端语种枚举值 → 中文展示名 */
+const LANGUAGE_LABEL_BY_CODE: Record<string, string> = {
+  jp: '日语',
+  de: '德语',
+  fr: '法语',
+  sp: '西班牙语',
+  ru: '俄语',
 }
 
-export type SessionDetail = {
-  session_id: string
-  total_score: number
-  submitted_at: string
-  sentences: SessionSentence[]
+/** 中文展示名 / 后端枚举值 → 后端语种枚举值 */
+const LANGUAGE_CODE_BY_LABEL: Record<string, string> = {
+  日语: 'jp',
+  德语: 'de',
+  法语: 'fr',
+  西班牙语: 'sp',
+  西语: 'sp',
+  俄语: 'ru',
+  jp: 'jp',
+  de: 'de',
+  fr: 'fr',
+  sp: 'sp',
+  ru: 'ru',
 }
 
-export async function getSessionDetail(sessionId: string) {
-  return request<SessionDetail>(`student/custom_content/detail/${sessionId}`, { method: 'GET' })
+/** 后端语种枚举值 → 列表页角标展示码 */
+const LANGUAGE_BADGE_BY_CODE: Record<string, string> = {
+  jp: 'JP',
+  de: 'DE',
+  fr: 'FR',
+  sp: 'ES',
+  ru: 'RU',
 }
 
-export type ProblemAreas = {
-  weak_phonemes: string[]
-  difficult_words: string[]
-  problematic_sentences: string[]
+/** 管理员端可支持的语种（后端 LanguageType） */
+export const ADMIN_LANGUAGE_OPTIONS = ['日语', '德语', '法语', '西班牙语', '俄语']
+
+/** 后端创建学生接口必填密码，前端批量导入未采集 → 使用统一初始密码 */
+const DEFAULT_STUDENT_PASSWORD = 'demo123456'
+/** 后端创建教师接口必填语种，前端表单未采集 → 使用默认语种 */
+const DEFAULT_TEACHER_LANGUAGE = 'fr'
+
+function languageLabel(code: string | null | undefined) {
+  if (!code) return ''
+  return LANGUAGE_LABEL_BY_CODE[code] ?? code
 }
 
-export async function getProblemAreas(sessionId: string) {
-  return request<ProblemAreas>(`student/custom_content/problem_areas/${sessionId}`, { method: 'GET' })
+function languageCode(label: string | null | undefined) {
+  if (!label) return ''
+  return LANGUAGE_CODE_BY_LABEL[label] ?? ''
 }
 
-// ========================================
-// P1: 学习分析 — 新 API 封装
-// ========================================
-
-export async function getStudentHistoryPhonemes() {
-  return request<{ success: boolean; phonemes: string[] }>('student/history/phonemes', { method: 'GET' })
-}
-
-export type HistoryRankingItem = {
-  word?: string
-  phoneme?: string
-  score: number
-}
-
-export type HistoryRanking = {
-  best_words: HistoryRankingItem[]
-  worst_words: HistoryRankingItem[]
-  best_phonemes: HistoryRankingItem[]
-  worst_phonemes: HistoryRankingItem[]
-}
-
-export async function getStudentHistoryRanking() {
-  return request<HistoryRanking>('student/history/ranking', { method: 'GET' })
-}
-
-export type HistoryWordDetail = {
-  word: string
-  average_score: number
-  max_score: number
-  min_score: number
-  count: number
-  scores: Array<{ score: number; date: string }>
-}
-
-export async function getStudentHistoryWordDetail(word: string) {
-  return request<HistoryWordDetail>(`student/history/word/${encodeURIComponent(word)}`, { method: 'GET' })
-}
-
-export type HistoryPhonemeDetail = {
-  phoneme: string
-  average_score: number
-  max_score: number
-  min_score: number
-  count: number
-  scores: Array<{ score: number; date: string }>
-}
-
-export async function getStudentHistoryPhonemeDetail(phoneme: string) {
-  return request<HistoryPhonemeDetail>(`student/history/phoneme/${encodeURIComponent(phoneme)}`, { method: 'GET' })
-}
-
-// ========================================
-// P2: 班级管理 — 新 API 封装
-// ========================================
-
-export type ClassMember = {
-  user_id: number
-  username: string
-  stu_id?: string
-  user_type?: string
-  joined_at?: string
-}
-
-export type ClassManageResponse = {
+type BackendClass = {
   class_id: string
   class_name: string
-  members: ClassMember[]
+  description: string | null
+  teachers: Array<{ user_id: number; username: string }>
+  language: string
+  student_count: number
 }
 
-export async function getClassManage(classId: string) {
-  return request<ClassManageResponse>(`teacher/class/${classId}/manage`, { method: 'GET' })
+type BackendTeacher = {
+  user_id: number
+  username: string
+  staff_id: string
+  classes: Array<{ class_id: string; class_name: string }>
+  language: string
 }
 
-export async function addStudentToClass(classId: string, studentId: string) {
-  return request<{ success: boolean }>(`teacher/class/${classId}/add_student`, {
+type BackendStudent = {
+  user_id: number
+  username: string
+  student_id: string
+}
+
+async function fetchAdminClasses(): Promise<BackendClass[]> {
+  const data = await request<BackendClass[]>('admin/classes', { method: 'GET' })
+  return Array.isArray(data) ? data : []
+}
+
+async function fetchAdminTeachers(): Promise<BackendTeacher[]> {
+  const data = await request<BackendTeacher[]>('admin/teachers', { method: 'GET' })
+  return Array.isArray(data) ? data : []
+}
+
+async function fetchAdminClassStudents(classId: string): Promise<BackendStudent[]> {
+  const data = await request<BackendStudent[]>('admin/class/students', {
     method: 'POST',
-    body: { student_id: studentId },
+    body: { class_id: classId },
   })
+  return Array.isArray(data) ? data : []
 }
 
-export async function removeStudentFromClass(classId: string, userId: number) {
-  return request<{ success: boolean }>(`teacher/class/${classId}/remove_student`, {
-    method: 'POST',
-    body: { user_id: userId },
-  })
-}
-
-// ========================================
-// P2: 学生表现 — 新 API 封装
-// ========================================
-
-export type StudentAnalysisResponse = {
-  student_name: string
-  evaluation_count: number
-  first_evaluation_at: string
-  last_evaluation_at: string
-  dimension_scores: {
-    pronunciation: number
-    rhythm: number
-    fluency: number
-    completeness: number
+function mapBackendClass(raw: BackendClass): AdminClassItem {
+  const teacher = raw.teachers?.[0]
+  return {
+    class_id: raw.class_id,
+    class_name: raw.class_name,
+    language: languageLabel(raw.language),
+    language_code: LANGUAGE_BADGE_BY_CODE[raw.language] ?? String(raw.language ?? '').toUpperCase(),
+    student_count: raw.student_count ?? 0,
+    teacher_id: teacher ? String(teacher.user_id) : null,
+    teacher_name: teacher?.username ?? '',
+    status: 'active',
+    description: raw.description ?? null,
+    start_date: null,
+    capacity: null,
   }
-  weak_phonemes: string[]
-  difficult_words: string[]
 }
 
-export async function getStudentAnalysis(classId: string, userId: string) {
-  return request<StudentAnalysisResponse>(`teacher/class/${classId}/student/${userId}/analysis`, { method: 'GET' })
+export type AdminOverviewActivity = {
+  activity_id: string
+  title: string
+  time: string
+  type: 'config' | 'teacher' | 'student' | 'class' | 'system'
 }
 
-export type ProgressScoreItem = {
-  date?: string
-  created_at?: string
-  pronunciation?: number
-  rhythm?: number
-  fluency?: number
-  completeness?: number
+export type AdminOverviewData = {
+  class_count: number
+  teacher_count: number
+  student_count: number
+  pending_count: number
+  activities: AdminOverviewActivity[]
 }
 
-export type StudentProgressResponse = {
-  student_name?: string
-  evaluation_count?: number
-  scores: ProgressScoreItem[]
+export async function getAdminOverview() {
+  const [classes, teachers] = await Promise.all([fetchAdminClasses(), fetchAdminTeachers()])
+  const data: AdminOverviewData = {
+    class_count: classes.length,
+    teacher_count: teachers.length,
+    student_count: classes.reduce((total, item) => total + (item.student_count ?? 0), 0),
+    pending_count: 0,
+    activities: [],
+  }
+  return { ok: true, data }
 }
 
-export async function getStudentProgress(userId: string) {
-  return request<StudentProgressResponse>(`teacher/student/${userId}/progress`, { method: 'GET' })
+export type AdminClassStatus = 'active' | 'ended'
+
+export type AdminClassItem = {
+  class_id: string
+  class_name: string
+  language: string
+  language_code: string
+  student_count: number
+  teacher_id: string | null
+  teacher_name: string
+  status: AdminClassStatus
+  description?: string | null
+  start_date?: string | null
+  capacity?: number | null
+}
+
+export type AdminClassQuery = {
+  keyword?: string
+  language?: string
+  status?: AdminClassStatus | ''
+}
+
+export async function getAdminClasses(query: AdminClassQuery = {}) {
+  const raw = await fetchAdminClasses()
+  const keyword = (query.keyword ?? '').trim().toLowerCase()
+  const data = raw.map(mapBackendClass).filter((item) => {
+    if (query.language && item.language !== query.language) return false
+    if (query.status && item.status !== query.status) return false
+    if (keyword && !item.class_name.toLowerCase().includes(keyword)) return false
+    return true
+  })
+  return { ok: true, data }
+}
+
+export async function getAdminClassDetail(classId: string) {
+  const raw = await fetchAdminClasses()
+  const target = raw.find((item) => item.class_id === classId)
+  if (!target) throw new ApiError('未找到对应班级', 404)
+  return { ok: true, data: mapBackendClass(target) }
+}
+
+export type AdminClassSavePayload = {
+  class_id?: string | null
+  class_name: string
+  language: string
+  teacher_id?: string | null
+  status?: AdminClassStatus
+  description?: string | null
+  start_date?: string | null
+  capacity?: number | null
+  students?: Array<{ stu_id: string; name: string }>
+}
+
+export async function saveAdminClass(payload: AdminClassSavePayload) {
+  // 编辑班级：后端 edit_class 仅支持 class_name（其 description 分支存在缺陷，暂不提交）
+  if (payload.class_id) {
+    await request<{ success: boolean }>('admin/class/edit', {
+      method: 'POST',
+      body: { class_id: payload.class_id, class_name: payload.class_name },
+    })
+    if (payload.teacher_id) {
+      await request<{ success: boolean }>('admin/teacher/assign', {
+        method: 'POST',
+        body: { user_id: Number(payload.teacher_id), classes_id: [payload.class_id] },
+      })
+    }
+    return { ok: true, class_id: payload.class_id }
+  }
+
+  // 新建班级
+  const created = await request<{ class_id: string; class_name: string }>('admin/class/create', {
+    method: 'POST',
+    body: {
+      class_name: payload.class_name,
+      grade_level: String(new Date().getFullYear()),
+      description: payload.description ?? null,
+      language_type: languageCode(payload.language) || DEFAULT_TEACHER_LANGUAGE,
+    },
+  })
+
+  const classId = created?.class_id ?? ''
+
+  // 批量导入学生
+  if (classId && payload.students?.length) {
+    await request<Array<{ user_id: number }>>('admin/class/students/add', {
+      method: 'POST',
+      body: {
+        class_id: classId,
+        students: payload.students.map((item) => ({
+          username: item.name,
+          password: DEFAULT_STUDENT_PASSWORD,
+          student_staff_id: item.stu_id,
+        })),
+      },
+    })
+  }
+
+  // 分配任课教师
+  if (classId && payload.teacher_id) {
+    await request<{ success: boolean }>('admin/teacher/assign', {
+      method: 'POST',
+      body: { user_id: Number(payload.teacher_id), classes_id: [classId] },
+    })
+  }
+
+  return { ok: true, class_id: classId }
+}
+
+export type AdminStudentItem = {
+  user_id: string
+  name: string
+  stu_id: string
+  class_id?: string | null
+  class_name?: string | null
+  language?: string | null
+}
+
+export type AdminClassStudentsData = {
+  class_id: string
+  class_name: string
+  language: string
+  students: AdminStudentItem[]
+}
+
+export async function getAdminClassStudents(classId: string) {
+  const [classes, students] = await Promise.all([fetchAdminClasses(), fetchAdminClassStudents(classId)])
+  const target = classes.find((item) => item.class_id === classId)
+  const className = target?.class_name ?? ''
+  const language = languageLabel(target?.language)
+  const data: AdminClassStudentsData = {
+    class_id: classId,
+    class_name: className,
+    language,
+    students: students.map((item) => ({
+      user_id: String(item.user_id),
+      name: item.username,
+      stu_id: item.student_id,
+      class_id: classId,
+      class_name: className,
+      language,
+    })),
+  }
+  return { ok: true, data }
+}
+
+export type AdminStudentQuery = {
+  keyword?: string
+  class_id?: string
+}
+
+export async function getAdminStudents(query: AdminStudentQuery = {}) {
+  const classes = await fetchAdminClasses()
+  const targets = query.class_id ? classes.filter((item) => item.class_id === query.class_id) : classes
+
+  const data: AdminStudentItem[] = []
+  for (const cls of targets) {
+    const students = await fetchAdminClassStudents(cls.class_id)
+    for (const student of students) {
+      data.push({
+        user_id: String(student.user_id),
+        name: student.username,
+        stu_id: student.student_id,
+        class_id: cls.class_id,
+        class_name: cls.class_name,
+        language: languageLabel(cls.language),
+      })
+    }
+  }
+
+  const keyword = (query.keyword ?? '').trim().toLowerCase()
+  const filtered = keyword
+    ? data.filter(
+        (item) => item.name.toLowerCase().includes(keyword) || item.stu_id.toLowerCase().includes(keyword),
+      )
+    : data
+  return { ok: true, data: filtered }
+}
+
+export async function getAdminStudentDetail(userId: string) {
+  const { data } = await getAdminStudents()
+  const target = data.find((item) => item.user_id === String(userId))
+  if (!target) throw new ApiError('未找到该学生', 404)
+  return { ok: true, data: target }
+}
+
+export type AdminStudentSavePayload = {
+  user_id?: string | null
+  class_id?: string | null
+  name: string
+  stu_id: string
+  password?: string
+}
+
+export async function saveAdminStudent(payload: AdminStudentSavePayload) {
+  // 编辑学生
+  if (payload.user_id) {
+    await request<{ success: boolean }>('admin/user/edit', {
+      method: 'POST',
+      body: {
+        user_id: Number(payload.user_id),
+        user_type: 'Student',
+        username: payload.name,
+        student_staff_id: payload.stu_id,
+      },
+    })
+    return { ok: true, user_id: payload.user_id }
+  }
+
+  // 新增学生并加入班级
+  if (!payload.class_id) throw new ApiError('缺少目标班级', 400)
+  const created = await request<Array<{ user_id: number }>>('admin/class/students/add', {
+    method: 'POST',
+    body: {
+      class_id: payload.class_id,
+      students: [
+        {
+          username: payload.name,
+          password: payload.password || DEFAULT_STUDENT_PASSWORD,
+          student_staff_id: payload.stu_id,
+        },
+      ],
+    },
+  })
+  return { ok: true, user_id: String(created?.[0]?.user_id ?? '') }
+}
+
+export type AdminStudentChangeClassPayload = {
+  user_id: string
+  target_class_id: string
+  reason?: string
+}
+
+export async function changeAdminStudentClass(payload: AdminStudentChangeClassPayload) {
+  const detail = await getAdminStudentDetail(payload.user_id)
+  const oldClassId = detail.data.class_id ?? ''
+  if (!oldClassId) throw new ApiError('未找到该学生当前所在班级', 400)
+
+  await request<{ success: boolean }>('admin/student/change_class', {
+    method: 'POST',
+    body: {
+      user_id: Number(payload.user_id),
+      old_class_id: oldClassId,
+      new_class_id: payload.target_class_id,
+    },
+  })
+  return { ok: true }
+}
+
+export type AdminTeacherStatus = 'active' | 'inactive'
+
+export type AdminTeacherItem = {
+  teacher_id: string
+  name: string
+  staff_id: string
+  subject: string
+  class_count: number
+  email: string
+  status: AdminTeacherStatus
+}
+
+export type AdminTeacherQuery = {
+  keyword?: string
+  subject?: string
+  status?: AdminTeacherStatus | ''
+}
+
+function mapBackendTeacher(raw: BackendTeacher): AdminTeacherItem {
+  return {
+    teacher_id: String(raw.user_id),
+    name: raw.username,
+    staff_id: raw.staff_id,
+    subject: languageLabel(raw.language),
+    class_count: raw.classes?.length ?? 0,
+    email: '',
+    status: 'active',
+  }
+}
+
+export async function getAdminTeachers(query: AdminTeacherQuery = {}) {
+  const raw = await fetchAdminTeachers()
+  const keyword = (query.keyword ?? '').trim().toLowerCase()
+  const data = raw.map(mapBackendTeacher).filter((item) => {
+    if (query.subject && item.subject !== query.subject) return false
+    if (query.status && item.status !== query.status) return false
+    if (keyword && !item.name.toLowerCase().includes(keyword) && !item.staff_id.toLowerCase().includes(keyword)) {
+      return false
+    }
+    return true
+  })
+  return { ok: true, data }
+}
+
+export async function getAdminTeacherDetail(teacherId: string) {
+  const { data } = await getAdminTeachers()
+  const target = data.find((item) => item.teacher_id === String(teacherId))
+  if (!target) throw new ApiError('未找到该教师', 404)
+  return { ok: true, data: target }
+}
+
+export type AdminTeacherSavePayload = {
+  teacher_id?: string | null
+  name: string
+  staff_id: string
+  subject?: string
+  password?: string
+  status?: AdminTeacherStatus
+}
+
+export async function saveAdminTeacher(payload: AdminTeacherSavePayload) {
+  // 编辑教师
+  if (payload.teacher_id) {
+    await request<{ success: boolean }>('admin/user/edit', {
+      method: 'POST',
+      body: {
+        user_id: Number(payload.teacher_id),
+        user_type: 'Teacher',
+        username: payload.name,
+        student_staff_id: payload.staff_id,
+      },
+    })
+    return { ok: true, teacher_id: payload.teacher_id }
+  }
+
+  // 新增教师（后端必填语种，前端表单未采集 → 使用默认语种）
+  const created = await request<{ user_id: number }>('admin/teacher/add', {
+    method: 'POST',
+    body: {
+      username: payload.name,
+      password: payload.password ?? '',
+      student_staff_id: payload.staff_id,
+      language: languageCode(payload.subject) || DEFAULT_TEACHER_LANGUAGE,
+    },
+  })
+  return { ok: true, teacher_id: String(created?.user_id ?? '') }
+}
+
+export type AdminTeacherAssignmentClass = {
+  class_id: string
+  class_name: string
+  language: string
+  assigned: boolean
+}
+
+export type AdminTeacherAssignmentData = {
+  teacher_id: string
+  teacher_name: string
+  staff_id: string
+  classes: AdminTeacherAssignmentClass[]
+}
+
+export async function getAdminTeacherAssignments(teacherId: string) {
+  const [teachers, classes] = await Promise.all([fetchAdminTeachers(), fetchAdminClasses()])
+  const teacher = teachers.find((item) => String(item.user_id) === String(teacherId))
+  if (!teacher) throw new ApiError('未找到该教师', 404)
+
+  const assignedIds = new Set((teacher.classes ?? []).map((item) => item.class_id))
+  const data: AdminTeacherAssignmentData = {
+    teacher_id: String(teacher.user_id),
+    teacher_name: teacher.username,
+    staff_id: teacher.staff_id,
+    classes: classes.map((item) => ({
+      class_id: item.class_id,
+      class_name: item.class_name,
+      language: languageLabel(item.language),
+      assigned: assignedIds.has(item.class_id),
+    })),
+  }
+  return { ok: true, data }
+}
+
+export async function assignAdminTeacherClasses(teacherId: string, classIds: string[]) {
+  if (!classIds.length) return { ok: true }
+  await request<{ success: boolean }>('admin/teacher/assign', {
+    method: 'POST',
+    body: { user_id: Number(teacherId), classes_id: classIds },
+  })
+  return { ok: true }
+}
+
+export async function unassignAdminTeacherClasses(teacherId: string, classIds: string[]) {
+  for (const classId of classIds) {
+    await request<{ success: boolean }>('admin/user/unlink_class', {
+      method: 'POST',
+      body: { user_type: 'Teacher', user_id: Number(teacherId), class_id: classId },
+    })
+  }
+  return { ok: true }
+}
+
+// ========================================
+// 教师端 — 模板库
+// ========================================
+
+export type TeacherTemplateVisibility = 'school' | 'private'
+
+export type TeacherTemplateItem = {
+  template_id: string
+  title: string
+  sentence_count: number
+  phonemes: string[]
+  visibility: TeacherTemplateVisibility
+  preview: string
+  segments: string[]
+}
+
+type BackendTaskTemplate = {
+  task_template_id: string
+  template_title: string
+  segments: string[]
+  target_phoneme: string[] | null
+  creator: number
+}
+
+export async function getTeacherTemplates() {
+  const raw = await request<BackendTaskTemplate[]>('teacher/task_templates', { method: 'GET' })
+  const list = Array.isArray(raw) ? raw : []
+  const data: TeacherTemplateItem[] = list.map((item) => {
+    const segments = item.segments ?? []
+    return {
+      template_id: item.task_template_id,
+      title: item.template_title,
+      sentence_count: segments.length,
+      phonemes: item.target_phoneme ?? [],
+      visibility: 'school',
+      preview: segments[0] ?? '',
+      segments,
+    }
+  })
+  return { ok: true, data }
 }

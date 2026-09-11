@@ -2,7 +2,11 @@
 import { BookOpen, ListTodo, ChevronRight } from 'lucide-vue-next'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 import type { StudentTaskItem } from '../../api/endpoints'
-import { getStudentTaskAvailability, studentTaskAvailabilityLabels } from '../../utils/studentTaskAvailability'
+import {
+  getStudentTaskAvailability,
+  getStudentTaskAvailabilityFromApi,
+  studentTaskAvailabilityLabels,
+} from '../../utils/studentTaskAvailability'
 
 defineProps<{
   items: StudentTaskItem[]
@@ -14,13 +18,17 @@ defineEmits<{
   (e: 'select', taskId: string): void
 }>()
 
-const taskWindowStatus = (item: StudentTaskItem) => getStudentTaskAvailability({
-  isActive: item.is_active,
-  availableFrom: item.available_from,
-  availableUntil: item.available_until,
-  maxAttempts: item.max_submission,
-  attemptCount: item.attempt_count,
-})
+// 优先采用后端权威 task_status（列表接口不返回 available_until，本地无法推算过期状态），
+// 缺失时再回退到本地按时间窗推算，保证与右侧详情页状态一致。
+const taskWindowStatus = (item: StudentTaskItem) =>
+  getStudentTaskAvailabilityFromApi(item.task_status) ??
+  getStudentTaskAvailability({
+    isActive: item.is_active,
+    availableFrom: item.available_from,
+    availableUntil: item.available_until,
+    maxAttempts: item.max_submission,
+    attemptCount: item.attempt_count,
+  })
 
 const taskStatusLabel = (item: StudentTaskItem) => {
   return studentTaskAvailabilityLabels[taskWindowStatus(item)]

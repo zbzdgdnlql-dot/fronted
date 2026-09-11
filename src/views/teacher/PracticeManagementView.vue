@@ -104,7 +104,11 @@ const saveTaskChanges = async () => {
   const changes: Parameters<typeof updateTeacherTask>[0] = { taskId: task.task_id }
   if (title !== (task.title ?? '')) changes.title = title
   const notes = editNotes.value.trim() || null
-  if (notes !== (task.notes ?? null)) changes.notes = notes
+  if (notes !== (task.notes ?? null)) {
+    changes.notes = notes
+    // 备注以 [[mode:xxx]] 前缀承载练习模式，改动备注时需回传模式，否则前缀会丢失
+    changes.mode = task.mode ?? 'sentence'
+  }
   if (editMaxAttempt.value !== (task.max_attempt ?? null)) changes.maxAttempt = editMaxAttempt.value
   if (!sameInstant(availableFrom, task.available_from)) changes.availableFrom = availableFrom
   if (!sameInstant(availableUntil, task.available_until)) changes.availableUntil = availableUntil

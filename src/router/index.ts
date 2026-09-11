@@ -50,6 +50,8 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
+      // 首页为单屏测评页：保留页头、隐藏页脚，避免整页滚动
+      meta: { hideFooter: true },
       component: HomeView,
     },
     {
@@ -78,6 +80,11 @@ const router = createRouter({
           component: () => import('../views/teacher/PracticeManagementView.vue'),
         },
         {
+          path: 'templates',
+          name: 'teacher-templates',
+          component: () => import('../views/teacher/TeacherTemplateLibraryView.vue'),
+        },
+        {
           path: 'exercise',
           name: 'teacher-exercise',
           component: () => import('../views/teacher/PracticeExerciseView.vue'),
@@ -104,21 +111,84 @@ const router = createRouter({
         },
       ],
     },
+    // 管理员端
+    {
+      path: '/admin',
+      component: () => import('../components/admin/AdminLayout.vue'),
+      children: [
+        { path: '', redirect: '/admin/overview' },
+        {
+          path: 'overview',
+          name: 'admin-overview',
+          component: () => import('../views/admin/AdminOverviewView.vue'),
+        },
+        {
+          path: 'classes',
+          name: 'admin-classes',
+          component: () => import('../views/admin/AdminClassesView.vue'),
+        },
+        {
+          path: 'classes/create',
+          name: 'admin-class-create',
+          component: () => import('../views/admin/AdminClassCreateView.vue'),
+        },
+        {
+          path: 'classes/:classId/edit',
+          name: 'admin-class-edit',
+          component: () => import('../views/admin/AdminClassEditView.vue'),
+        },
+        {
+          path: 'classes/:classId/students/add',
+          name: 'admin-class-student-add',
+          component: () => import('../views/admin/AdminClassStudentAddView.vue'),
+        },
+        {
+          path: 'teachers',
+          name: 'admin-teachers',
+          component: () => import('../views/admin/AdminTeachersView.vue'),
+        },
+        {
+          path: 'teachers/create',
+          name: 'admin-teacher-create',
+          component: () => import('../views/admin/AdminTeacherCreateView.vue'),
+        },
+        {
+          path: 'teachers/:teacherId/edit',
+          name: 'admin-teacher-edit',
+          component: () => import('../views/admin/AdminTeacherEditView.vue'),
+        },
+        {
+          path: 'teachers/:teacherId/assign',
+          name: 'admin-teacher-assign',
+          component: () => import('../views/admin/AdminTeacherAssignView.vue'),
+        },
+        {
+          path: 'teachers/:teacherId/unassign',
+          name: 'admin-teacher-unassign',
+          component: () => import('../views/admin/AdminTeacherUnassignView.vue'),
+        },
+        {
+          path: 'students',
+          name: 'admin-students',
+          component: () => import('../views/admin/AdminStudentsView.vue'),
+        },
+        {
+          path: 'students/:userId/edit',
+          name: 'admin-student-edit',
+          component: () => import('../views/admin/AdminStudentEditView.vue'),
+        },
+        {
+          path: 'students/:userId/change-class',
+          name: 'admin-student-change-class',
+          component: () => import('../views/admin/AdminStudentChangeClassView.vue'),
+        },
+      ],
+    },
     // P2: 教师端新页面
     {
       path: '/teacher/classes',
       name: 'teacher-classes',
       component: () => import('../views/teacher/ClassManagementView.vue'),
-    },
-    {
-      path: '/teacher/classes/:classId/organize',
-      name: 'teacher-class-organize',
-      component: () => import('../views/teacher/ClassOrganizationView.vue'),
-    },
-    {
-      path: '/teacher/classes/:classId/student/:userId',
-      name: 'teacher-student-performance',
-      component: () => import('../views/teacher/StudentPerformanceView.vue'),
     },
     // P0: 薄弱分析 — 替换旧 /evaluate/result
     {
@@ -133,11 +203,6 @@ const router = createRouter({
       component: () => import('../views/student/ProfileView.vue'),
     },
     // 旧路由保留（重定向到新路由）
-    {
-      path: '/history',
-      name: 'student-history',
-      component: () => import('../views/student/HistoryView.vue'),
-    },
     {
       path: '/profile',
       redirect: '/student/profile',
@@ -169,15 +234,21 @@ router.beforeEach((to) => {
   const isPublic = !!to.meta?.public
   if (isPublic) return true
   if (hasSession()) {
+    const userType = getUserType()
     if (mustChangePassword() && to.path !== '/change-password') {
       return { path: '/change-password', query: { redirect: to.fullPath } }
     }
     if (!mustChangePassword() && to.path === '/change-password') {
-      return { path: getUserType() === 'teacher' ? '/teacher/overview' : '/' }
+      if (userType === 'teacher') return { path: '/teacher/overview' }
+      if (userType === 'admin') return { path: '/admin/overview' }
+      return { path: '/' }
+    }
+    if (to.path.startsWith('/admin') && userType !== 'admin') {
+      return { path: '/login', query: { redirect: to.fullPath } }
     }
     if (to.path === '/') {
-      const userType = getUserType()
       if (userType === 'teacher') return { path: '/teacher/overview' }
+      if (userType === 'admin') return { path: '/admin/overview' }
     }
     return true
   }

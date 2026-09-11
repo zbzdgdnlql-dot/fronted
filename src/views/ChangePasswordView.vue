@@ -33,7 +33,9 @@ const passwordError = computed(() => {
 const redirectTarget = computed(() => {
   const redirect = route.query.redirect as string | undefined
   if (redirect && redirect !== '/change-password') return redirect
-  return auth.userType.value === 'teacher' ? '/teacher/overview' : '/'
+  if (auth.userType.value === 'teacher') return '/teacher/overview'
+  if (auth.userType.value === 'admin') return '/admin/overview'
+  return '/'
 })
 
 const buildStudentSession = async (baseSession: Session) => {

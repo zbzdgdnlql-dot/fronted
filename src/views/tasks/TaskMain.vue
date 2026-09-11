@@ -45,6 +45,13 @@ const formatType = (type: StudentTaskDetail['task_type']) => {
   return type === 'homework' ? '作业' : '练习'
 }
 
+/** 练习模式对应的量词，用于「N 句 / N 词 / N 对」文案 */
+const segmentUnit = (task: StudentTaskDetail) => {
+  if (task.mode === 'word') return '词'
+  if (task.mode === 'pair') return '对'
+  return '句'
+}
+
 const formatDate = (value: string | null) => {
   if (!value) return '--'
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
@@ -170,7 +177,7 @@ const completionClass = () => attemptCount() >= 1 ? 'bg-blue-50 text-blue-600' :
         <div class="rounded-2xl bg-white border border-gray-100 p-4">
           <div class="mb-3 flex items-center justify-between gap-3">
             <div class="text-xs font-black text-gray-400 uppercase tracking-widest">任务文本</div>
-            <div class="text-xs font-black text-gray-400">{{ props.taskDetail.segments.length }} 句</div>
+            <div class="text-xs font-black text-gray-400">{{ props.taskDetail.segments.length }} {{ segmentUnit(props.taskDetail) }}</div>
           </div>
           <ol class="flex flex-col gap-2">
             <li

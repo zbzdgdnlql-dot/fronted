@@ -4,6 +4,7 @@
 
 - 安装依赖：`npm install`
 - 启动开发：`npm run dev`
+- 一键启动（推荐，自动装依赖并打开浏览器）：`python start_dev.py`
 - 构建：`npm run build`
 - 运行测试：`npm test`
 
@@ -14,6 +15,25 @@
   - 服务器 Nginx 可将 `/api/*` 转发到后端并去掉 `/api` 前缀
   - 本地直连后端时可在 `.env.local` 中设置，例如：`VITE_API_BASE_URL=http://127.0.0.1:8000`
   - 请求默认使用 bearer token，不跨域携带 cookie
+
+## 本地 Mock 联调（无需后端）
+
+`.env.development.local` 已开启 `VITE_ENABLE_MOCK=true`，`npm run dev` 时所有请求由
+[mock.ts](src/api/mock.ts) 本地拦截，可直接跑通下列账号（密码统一 `123456`）：
+
+| 端 | 登录身份 | 账号 | 登录后落地路由 |
+| --- | --- | --- | --- |
+| 管理员端 | 管理员 | `admin` | `/admin/overview` |
+| 教师端 | 教师 | `teacher` | `/teacher/overview` |
+| 学生端 | 学生 | `student` | `/` |
+
+> 登录页需先从「学校」下拉中选中一所学校（如「华东师范大学」）才能提交。
+> 该开关仅对 `vite dev` 生效，`vitest` 与生产构建不受影响。
+
+## 页面清单（新增）
+
+- 管理员端（`/admin/*`，13 页）：总览、班级列表/创建/编辑/添加学生、教师列表/创建/编辑/分配/解除分配、学生列表/编辑/更改班级
+- 教师端：`/teacher/templates` 模板库
 
 ## 已接入接口清单
 

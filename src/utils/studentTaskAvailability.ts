@@ -29,6 +29,27 @@ export function getStudentTaskAvailability(input: StudentTaskAvailabilityInput):
   return 'open'
 }
 
+/** 后端 /student/tasks 与 /student/task_detail 返回的 task_status 取值 */
+export type StudentTaskApiStatus = 'not_started' | 'in_progress' | 'expired'
+
+const apiStatusToAvailability: Record<StudentTaskApiStatus, StudentTaskAvailabilityStatus> = {
+  not_started: 'not_started',
+  in_progress: 'open',
+  expired: 'ended',
+}
+
+/**
+ * 列表接口（/student/tasks）不返回 available_from / available_until，
+ * 无法在前端本地推算开放状态；此时应直接采用后端给出的权威 task_status。
+ * 无该字段时返回 null，由调用方回退到本地推算。
+ */
+export function getStudentTaskAvailabilityFromApi(
+  apiStatus?: StudentTaskApiStatus | null,
+): StudentTaskAvailabilityStatus | null {
+  if (!apiStatus) return null
+  return apiStatusToAvailability[apiStatus] ?? null
+}
+
 export const studentTaskAvailabilityLabels: Record<StudentTaskAvailabilityStatus, string> = {
   inactive: '未启用',
   not_started: '未开始',

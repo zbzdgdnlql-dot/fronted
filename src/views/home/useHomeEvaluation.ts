@@ -1,10 +1,9 @@
-import { computed, ref, shallowRef } from 'vue'
+import { computed, ref } from 'vue'
 import {
   analyzeStudentPronTest,
   createStudentTestSession,
   getStudentBasicInformation,
   submitStudentTestSession,
-  type CreateStudentTestSessionResponse,
   type StudentPronTestAnalyzeResultScore,
   type SubmitStudentTestSessionResponse,
 } from '../../api/endpoints'

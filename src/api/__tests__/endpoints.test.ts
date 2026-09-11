@@ -7,6 +7,55 @@ vi.mock('../http', () => {
       if (path === 'teacher/classes') return []
       if (path === 'teacher/tasks') return []
       if (path === 'teacher/task/auto_segment') return { segments: ['hello'] }
+      if (path === 'teacher/task_templates') {
+        return [
+          {
+            task_template_id: 'tpl-1',
+            template_title: '问候语模板',
+            segments: ['Bonjour', 'Ça va ?'],
+            target_phoneme: ['ʁ'],
+            creator: 1,
+          },
+        ]
+      }
+      // 管理员端（真实后端路由）
+      if (path === 'admin/classes') {
+        return [
+          {
+            class_id: 'cls-1',
+            class_name: '法语初级班-A',
+            description: null,
+            teachers: [{ user_id: 21, username: '张老师' }],
+            language: 'fr',
+            student_count: 2,
+          },
+        ]
+      }
+      if (path === 'admin/teachers') {
+        return [
+          {
+            user_id: 21,
+            username: '张老师',
+            staff_id: 'T1001',
+            classes: [{ class_id: 'cls-1', class_name: '法语初级班-A' }],
+            language: 'fr',
+          },
+        ]
+      }
+      if (path === 'admin/class/students') {
+        return [
+          { user_id: 31, username: '王小明', student_id: 'S1001' },
+          { user_id: 32, username: '李华', student_id: 'S1002' },
+        ]
+      }
+      if (path === 'admin/class/create') return { class_id: 'cls-new', class_name: '新班级' }
+      if (path === 'admin/class/edit') return { success: true }
+      if (path === 'admin/class/students/add') return [{ user_id: 41, username: '王小明' }]
+      if (path === 'admin/teacher/assign') return { success: true }
+      if (path === 'admin/user/unlink_class') return { success: true }
+      if (path === 'admin/user/edit') return { success: true }
+      if (path === 'admin/teacher/add') return { user_id: 51, username: '李老师' }
+      if (path === 'admin/student/change_class') return { success: true }
       return {}
     }),
     requestBlob: vi.fn(async () => new Blob(['audio'])),
@@ -47,6 +96,23 @@ import {
   createTeacherContent,
   publishTeacherTask,
   updateTeacherTask,
+  ADMIN_LANGUAGE_OPTIONS,
+  getTeacherTemplates,
+  getAdminOverview,
+  getAdminClasses,
+  getAdminClassDetail,
+  saveAdminClass,
+  getAdminClassStudents,
+  getAdminStudents,
+  getAdminStudentDetail,
+  saveAdminStudent,
+  changeAdminStudentClass,
+  getAdminTeachers,
+  getAdminTeacherDetail,
+  saveAdminTeacher,
+  getAdminTeacherAssignments,
+  assignAdminTeacherClasses,
+  unassignAdminTeacherClasses,
 } from '../endpoints'
 
 describe('api/endpoints', () => {
@@ -330,5 +396,222 @@ describe('api/endpoints', () => {
     expect(call[1].body).not.toHaveProperty('segments')
     expect(call[1].body).not.toHaveProperty('course')
     expect(call[1].body).not.toHaveProperty('task_type')
+  })
+
+  it('teacher templates map backend task_templates into template items', async () => {
+    const res = await getTeacherTemplates()
+    expect(request).toHaveBeenCalledWith('teacher/task_templates', expect.objectContaining({ method: 'GET' }))
+    expect(res.data).toHaveLength(1)
+    expect(res.data[0]).toEqual({
+      template_id: 'tpl-1',
+      title: '问候语模板',
+      sentence_count: 2,
+      phonemes: ['ʁ'],
+      visibility: 'school',
+      preview: 'Bonjour',
+      segments: ['Bonjour', 'Ça va ?'],
+    })
+  })
+
+  it('admin language options only expose backend-supported languages', () => {
+    expect(ADMIN_LANGUAGE_OPTIONS).toEqual(['日语', '德语', '法语', '西班牙语', '俄语'])
+  })
+
+  it('admin overview composes classes and teachers from real routes', async () => {
+    const res = await getAdminOverview()
+    expect(request).toHaveBeenCalledWith('admin/classes', expect.objectContaining({ method: 'GET' }))
+    expect(request).toHaveBeenCalledWith('admin/teachers', expect.objectContaining({ method: 'GET' }))
+    expect(res.data.class_count).toBe(1)
+    expect(res.data.teacher_count).toBe(1)
+    expect(res.data.student_count).toBe(2)
+  })
+
+  it('admin classes map backend fields and filter by keyword', async () => {
+    const res = await getAdminClasses({ keyword: '法语' })
+    expect(res.data).toHaveLength(1)
+    expect(res.data[0]).toEqual(
+      expect.objectContaining({
+        class_id: 'cls-1',
+        class_name: '法语初级班-A',
+        language: '法语',
+        language_code: 'FR',
+        teacher_id: '21',
+        teacher_name: '张老师',
+      }),
+    )
+    const empty = await getAdminClasses({ keyword: '不存在的班级' })
+    expect(empty.data).toHaveLength(0)
+  })
+
+  it('admin class detail resolves target and throws when missing', async () => {
+    const res = await getAdminClassDetail('cls-1')
+    expect(res.data.class_id).toBe('cls-1')
+    await expect(getAdminClassDetail('missing')).rejects.toThrow('未找到对应班级')
+  })
+
+  it('save admin class (edit) calls class/edit and optional teacher/assign', async () => {
+    await saveAdminClass({ class_id: 'cls-1', class_name: '新名字', language: '法语', teacher_id: '21' })
+    expect(request).toHaveBeenCalledWith(
+      'admin/class/edit',
+      expect.objectContaining({ method: 'POST', body: { class_id: 'cls-1', class_name: '新名字' } }),
+    )
+    expect(request).toHaveBeenCalledWith(
+      'admin/teacher/assign',
+      expect.objectContaining({ method: 'POST', body: { user_id: 21, classes_id: ['cls-1'] } }),
+    )
+  })
+
+  it('save admin class (create) creates class, imports students and assigns teacher', async () => {
+    const res = await saveAdminClass({
+      class_name: '新班级',
+      language: '西班牙语',
+      teacher_id: '21',
+      students: [{ stu_id: 'S1001', name: '王小明' }],
+    })
+    expect(res.class_id).toBe('cls-new')
+    expect(request).toHaveBeenCalledWith(
+      'admin/class/create',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({ class_name: '新班级', language_type: 'sp' }),
+      }),
+    )
+    expect(request).toHaveBeenCalledWith(
+      'admin/class/students/add',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({ class_id: 'cls-new' }),
+      }),
+    )
+    expect(request).toHaveBeenCalledWith(
+      'admin/teacher/assign',
+      expect.objectContaining({ method: 'POST', body: { user_id: 21, classes_id: ['cls-new'] } }),
+    )
+  })
+
+  it('admin class students merges class info and student list', async () => {
+    const res = await getAdminClassStudents('cls-1')
+    expect(res.data.class_name).toBe('法语初级班-A')
+    expect(res.data.language).toBe('法语')
+    expect(res.data.students).toHaveLength(2)
+    expect(res.data.students[0]).toEqual(
+      expect.objectContaining({ user_id: '31', name: '王小明', stu_id: 'S1001', class_id: 'cls-1' }),
+    )
+  })
+
+  it('admin students aggregate across classes and filter by keyword', async () => {
+    const res = await getAdminStudents()
+    expect(res.data).toHaveLength(2)
+    const filtered = await getAdminStudents({ keyword: 'S1002' })
+    expect(filtered.data).toHaveLength(1)
+    expect(filtered.data[0].name).toBe('李华')
+  })
+
+  it('admin student detail resolves by user_id and throws when missing', async () => {
+    const res = await getAdminStudentDetail('31')
+    expect(res.data.name).toBe('王小明')
+    await expect(getAdminStudentDetail('999')).rejects.toThrow('未找到该学生')
+  })
+
+  it('save admin student (edit) calls user/edit', async () => {
+    await saveAdminStudent({ user_id: '31', name: '王小明', stu_id: 'S1001' })
+    expect(request).toHaveBeenCalledWith(
+      'admin/user/edit',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({ user_id: 31, user_type: 'Student', student_staff_id: 'S1001' }),
+      }),
+    )
+  })
+
+  it('save admin student (create) calls class/students/add', async () => {
+    const res = await saveAdminStudent({ class_id: 'cls-1', name: '王小明', stu_id: 'S1001' })
+    expect(res.user_id).toBe('41')
+    expect(request).toHaveBeenCalledWith(
+      'admin/class/students/add',
+      expect.objectContaining({ method: 'POST', body: expect.objectContaining({ class_id: 'cls-1' }) }),
+    )
+  })
+
+  it('change admin student class resolves the old class before switching', async () => {
+    await changeAdminStudentClass({ user_id: '31', target_class_id: 'cls-2' })
+    expect(request).toHaveBeenCalledWith(
+      'admin/student/change_class',
+      expect.objectContaining({
+        method: 'POST',
+        body: { user_id: 31, old_class_id: 'cls-1', new_class_id: 'cls-2' },
+      }),
+    )
+  })
+
+  it('admin teachers map backend fields and filter by subject', async () => {
+    const res = await getAdminTeachers({ subject: '法语' })
+    expect(res.data[0]).toEqual(
+      expect.objectContaining({ teacher_id: '21', name: '张老师', staff_id: 'T1001', subject: '法语', class_count: 1 }),
+    )
+    const empty = await getAdminTeachers({ keyword: '不存在' })
+    expect(empty.data).toHaveLength(0)
+  })
+
+  it('admin teacher detail resolves target and throws when missing', async () => {
+    const res = await getAdminTeacherDetail('21')
+    expect(res.data.name).toBe('张老师')
+    await expect(getAdminTeacherDetail('999')).rejects.toThrow('未找到该教师')
+  })
+
+  it('save admin teacher (edit) calls user/edit', async () => {
+    await saveAdminTeacher({ teacher_id: '21', name: '张老师', staff_id: 'T1001' })
+    expect(request).toHaveBeenCalledWith(
+      'admin/user/edit',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({ user_id: 21, user_type: 'Teacher' }),
+      }),
+    )
+  })
+
+  it('save admin teacher (create) falls back to default language when subject missing', async () => {
+    await saveAdminTeacher({ name: '李老师', staff_id: 'T1002', password: 'p' })
+    expect(request).toHaveBeenCalledWith(
+      'admin/teacher/add',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({ username: '李老师', student_staff_id: 'T1002', language: 'fr' }),
+      }),
+    )
+
+    await saveAdminTeacher({ name: '李老师', staff_id: 'T1002', subject: '日语' })
+    expect(request).toHaveBeenCalledWith(
+      'admin/teacher/add',
+      expect.objectContaining({ body: expect.objectContaining({ language: 'jp' }) }),
+    )
+  })
+
+  it('admin teacher assignments mark assigned classes', async () => {
+    const res = await getAdminTeacherAssignments('21')
+    expect(res.data.teacher_name).toBe('张老师')
+    expect(res.data.classes[0]).toEqual({
+      class_id: 'cls-1',
+      class_name: '法语初级班-A',
+      language: '法语',
+      assigned: true,
+    })
+  })
+
+  it('assign/unassign admin teacher classes hit the real routes', async () => {
+    await assignAdminTeacherClasses('21', ['cls-1', 'cls-2'])
+    expect(request).toHaveBeenCalledWith(
+      'admin/teacher/assign',
+      expect.objectContaining({ method: 'POST', body: { user_id: 21, classes_id: ['cls-1', 'cls-2'] } }),
+    )
+
+    await unassignAdminTeacherClasses('21', ['cls-1'])
+    expect(request).toHaveBeenCalledWith(
+      'admin/user/unlink_class',
+      expect.objectContaining({
+        method: 'POST',
+        body: { user_type: 'Teacher', user_id: 21, class_id: 'cls-1' },
+      }),
+    )
   })
 })

@@ -7,10 +7,9 @@ import { ApiError } from './errors'
 // 登录账号：
 //   教师端  teacher / 123456（用户类型选「教师」）
 //   学生端  student / 123456（用户类型选「学生」）
+//   管理员端 admin  / 123456（用户类型选「管理员」）
 // 学校：华东师范大学
 // =====================================================
-
-type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -158,6 +157,168 @@ const SCORE_SUMMARY = {
   tone: 87,
 }
 
+// ---------------- 管理员端数据 ----------------
+
+const ADMIN_OVERVIEW = {
+  class_count: 8,
+  teacher_count: 12,
+  student_count: 320,
+  pending_count: 5,
+  activities: [
+    { activity_id: 'act-1', title: '张老师 更新了 三年级1班 的配置', time: '10 分钟前', type: 'config' },
+    { activity_id: 'act-2', title: '新增教师 李老师', time: '1 小时前', type: 'teacher' },
+    { activity_id: 'act-3', title: '王同学 完成了 英语口语练习', time: '2 小时前', type: 'student' },
+    { activity_id: 'act-4', title: '新增班级 四年级2班', time: '昨天', type: 'class' },
+    { activity_id: 'act-5', title: '系统 备份了平台数据', time: '2 天前', type: 'system' },
+  ],
+}
+
+const ADMIN_CLASSES = [
+  {
+    class_id: 'admin-class-001',
+    class_name: '初级英语 A班',
+    language: '英语',
+    language_code: 'EN',
+    student_count: 24,
+    teacher_id: 'admin-teacher-001',
+    teacher_name: '李老师',
+    status: 'active',
+    description: '零基础英语入门，掌握字母、音标与日常问候语。',
+    start_date: '2026-03-01',
+    capacity: 30,
+  },
+  {
+    class_id: 'admin-class-002',
+    class_name: '商务法语 B班',
+    language: '法语',
+    language_code: 'FR',
+    student_count: 18,
+    teacher_id: 'admin-teacher-002',
+    teacher_name: '王老师',
+    status: 'active',
+    description: '面向商务场景的法语听说训练。',
+    start_date: '2026-03-12',
+    capacity: 24,
+  },
+  {
+    class_id: 'admin-class-003',
+    class_name: '日语入门 C班',
+    language: '日语',
+    language_code: 'JP',
+    student_count: 30,
+    teacher_id: 'admin-teacher-003',
+    teacher_name: '张老师',
+    status: 'ended',
+    description: '五十音图与基础会话，已完成全部课程。',
+    start_date: '2025-09-01',
+    capacity: 30,
+  },
+  {
+    class_id: 'admin-class-004',
+    class_name: '西班牙语 D班',
+    language: '西班牙语',
+    language_code: 'ES',
+    student_count: 21,
+    teacher_id: 'admin-teacher-004',
+    teacher_name: '刘老师',
+    status: 'active',
+    description: '西班牙语语音与日常交流。',
+    start_date: '2026-04-02',
+    capacity: 28,
+  },
+  {
+    class_id: 'admin-class-005',
+    class_name: '韩语基础 E班',
+    language: '韩语',
+    language_code: 'KR',
+    student_count: 15,
+    teacher_id: 'admin-teacher-005',
+    teacher_name: '陈老师',
+    status: 'ended',
+    description: '韩语字母与基础语法，已结课。',
+    start_date: '2025-10-08',
+    capacity: 20,
+  },
+  {
+    class_id: 'admin-class-006',
+    class_name: '德语进阶 F班',
+    language: '德语',
+    language_code: 'DE',
+    student_count: 12,
+    teacher_id: 'admin-teacher-006',
+    teacher_name: '赵老师',
+    status: 'active',
+    description: '德语中级语法与口语表达强化。',
+    start_date: '2026-05-06',
+    capacity: 18,
+  },
+]
+
+const ADMIN_TEACHERS = [
+  { teacher_id: 'admin-teacher-001', name: '李思远', staff_id: 'T-1001', subject: '英语', class_count: 3, email: 'lisiyuan@aiduoyu.cn', status: 'active' },
+  { teacher_id: 'admin-teacher-002', name: '王梦洁', staff_id: 'T-1002', subject: '西语', class_count: 2, email: 'wangmengjie@aiduoyu.cn', status: 'active' },
+  { teacher_id: 'admin-teacher-003', name: '佐藤美咲', staff_id: 'T-1003', subject: '日语', class_count: 4, email: 'missao@aiduoyu.cn', status: 'active' },
+  { teacher_id: 'admin-teacher-004', name: '陈嘉禾', staff_id: 'T-1004', subject: '法语', class_count: 0, email: 'chenjiahe@aiduoyu.cn', status: 'inactive' },
+  { teacher_id: 'admin-teacher-005', name: '赵云飞', staff_id: 'T-1005', subject: '德语', class_count: 2, email: 'zhaoyunfei@aiduoyu.cn', status: 'active' },
+  { teacher_id: 'admin-teacher-006', name: '林晓雯', staff_id: 'T-1006', subject: '韩语', class_count: 1, email: 'linxiaowen@aiduoyu.cn', status: 'inactive' },
+]
+
+const ADMIN_STUDENTS = [
+  { user_id: 'admin-student-001', name: '王小明', stu_id: 'S1001', class_id: 'admin-class-001', class_name: '初级英语 A班', language: '英语' },
+  { user_id: 'admin-student-002', name: '李华', stu_id: 'S1002', class_id: 'admin-class-001', class_name: '初级英语 A班', language: '英语' },
+  { user_id: 'admin-student-003', name: '张伟', stu_id: 'S1003', class_id: 'admin-class-002', class_name: '商务法语 B班', language: '法语' },
+  { user_id: 'admin-student-004', name: '赵芳', stu_id: 'S1004', class_id: 'admin-class-002', class_name: '商务法语 B班', language: '法语' },
+  { user_id: 'admin-student-005', name: '陈静', stu_id: 'S1005', class_id: 'admin-class-004', class_name: '西班牙语 D班', language: '西班牙语' },
+  { user_id: 'admin-student-006', name: '刘洋', stu_id: 'S1006', class_id: 'admin-class-006', class_name: '德语进阶 F班', language: '德语' },
+]
+
+const TEACHER_TEMPLATES = [
+  {
+    template_id: 'tpl-001',
+    title: '牛津树 · 三年级 Unit 3 朗读',
+    sentence_count: 12,
+    phonemes: ['/æ/', '/eɪ/'],
+    visibility: 'school',
+    preview: 'The children went to the park and played on the swings. Everyone had a wonderful time together.',
+    segments: [
+      'The children went to the park.',
+      'They played on the swings all afternoon.',
+      'Everyone had a wonderful time together.',
+    ],
+  },
+  {
+    template_id: 'tpl-002',
+    title: '人教版 · 七年级上册 Unit 1 朗读',
+    sentence_count: 8,
+    phonemes: [],
+    visibility: 'private',
+    preview: 'My name is Li Ming. I am a student in Grade Seven. Nice to meet you all.',
+    segments: ['My name is Li Ming.', 'I am a student in Grade Seven.', 'Nice to meet you all.'],
+  },
+  {
+    template_id: 'tpl-003',
+    title: '绘本 · 饥饿的毛毛虫 精读',
+    sentence_count: 15,
+    phonemes: ['/θ/', '/ð/'],
+    visibility: 'school',
+    preview: 'In the light of the moon a little egg lay on a leaf. One Sunday morning the warm sun came up.',
+    segments: [
+      'In the light of the moon a little egg lay on a leaf.',
+      'One Sunday morning the warm sun came up.',
+      'The very hungry caterpillar started to look for some food.',
+    ],
+  },
+  {
+    template_id: 'tpl-004',
+    title: '语音语调 · 疑问句 & 重读',
+    sentence_count: 10,
+    phonemes: ['/ɪ/', '/iː/'],
+    visibility: 'private',
+    preview: 'Is this your seat? Yes, it is. Please sit down and keep it clean.',
+    segments: ['Is this your seat?', 'Yes, it is.', 'Please sit down and keep it clean.'],
+  },
+]
+
 // ---------------- 登录 ----------------
 
 function mockLogin(body: any) {
@@ -181,6 +342,15 @@ function mockLogin(body: any) {
       user: { user_id: 'mock-student-1', user_type: 'Student' },
     }
   }
+  if (user_type === 'Admin') {
+    if (stu_id !== 'admin') throw new ApiError('账号或密码错误', 401, '401', { detail: '账号或密码错误' })
+    return {
+      access_token: 'mock-admin-token',
+      token_type: 'bearer',
+      must_change_password: false,
+      user: { user_id: 'mock-admin-1', user_type: 'Admin' },
+    }
+  }
   throw new ApiError('账号或密码错误', 401, '401', { detail: '账号或密码错误' })
 }
 
@@ -188,13 +358,16 @@ function currentUserDetail() {
   try {
     const raw = localStorage.getItem('session')
     const session = raw ? JSON.parse(raw) : null
-    const isTeacher = session?.user_type === 'teacher'
+    const userType = String(session?.user_type ?? 'student')
+    const isTeacher = userType === 'teacher'
+    const isAdmin = userType === 'admin'
+    const isStudent = !isTeacher && !isAdmin
     return {
       ok: true,
       data: {
-        user_id: isTeacher ? 99 : 1,
-        user_type: isTeacher ? 'teacher' : 'student',
-        username: isTeacher ? 'teacher' : 'student',
+        user_id: isAdmin ? 100 : isTeacher ? 99 : 1,
+        user_type: isAdmin ? 'admin' : isTeacher ? 'teacher' : 'student',
+        username: isAdmin ? 'admin' : isTeacher ? 'teacher' : 'student',
         school: { school_id: 'ecnu', school_name: '华东师范大学' },
         is_active: true,
         gender: null,
@@ -203,12 +376,12 @@ function currentUserDetail() {
         avatar_url: null,
         created_at: '2026-03-01 08:00:00',
         updated_at: '2026-08-01 08:00:00',
-        stu_id: isTeacher ? null : 'STU2024001',
-        staff_id: isTeacher ? 'TCH2024001' : null,
+        stu_id: isStudent ? 'STU2024001' : null,
+        staff_id: isTeacher ? 'TCH2024001' : isAdmin ? 'ADM2024001' : null,
         language: 'fr',
-        classes: isTeacher
-          ? []
-          : CLASSES.map((c) => ({ class_id: c.class_id, class_name: c.class_name, grade_level: c.grade_level })),
+        classes: isStudent
+          ? CLASSES.map((c) => ({ class_id: c.class_id, class_name: c.class_name, grade_level: c.grade_level }))
+          : [],
         is_root: false,
       },
     }
@@ -219,12 +392,8 @@ function currentUserDetail() {
 
 // ---------------- 路由匹配 ----------------
 
-type Match = { method: Method; path: string; query: Record<string, string>; body: any }
-
-function route(re: RegExp, method: Method, p: string): RegExpMatchArray | null {
-  const m = p.match(re)
-  if (!m) return null
-  return m
+function route(re: RegExp, p: string): RegExpMatchArray | null {
+  return p.match(re)
 }
 
 export async function resolveMock(
@@ -330,7 +499,7 @@ export async function resolveMock(
       worst_phonemes: [{ phoneme: 'r', score: 68 }, { phoneme: 'u', score: 72 }],
     }
   }
-  if (route(/^\/student\/history\/word\/(.+)$/, m, p)) {
+  if (route(/^\/student\/history\/word\/(.+)$/, p)) {
     return {
       word: decodeURIComponent(p.split('/word/')[1]),
       average_score: 86,
@@ -345,7 +514,7 @@ export async function resolveMock(
       ],
     }
   }
-  if (route(/^\/student\/history\/phoneme\/(.+)$/, m, p)) {
+  if (route(/^\/student\/history\/phoneme\/(.+)$/, p)) {
     return {
       phoneme: decodeURIComponent(p.split('/phoneme/')[1]),
       average_score: 80,
@@ -390,7 +559,7 @@ export async function resolveMock(
   if (m === 'POST' && p === '/student/pron-test/submit_session') {
     return { ok: true, session_id: 'mock-session-1', total_score: 86, evaluation_count: 3, average_score: 86 }
   }
-  if (route(/^\/student\/custom_content\/detail\/(.+)$/, m, p)) {
+  if (route(/^\/student\/custom_content\/detail\/(.+)$/, p)) {
     return {
       session_id: 'mock-session-1',
       total_score: 86,
@@ -401,7 +570,7 @@ export async function resolveMock(
       ],
     }
   }
-  if (route(/^\/student\/custom_content\/problem_areas\/(.+)$/, m, p)) {
+  if (route(/^\/student\/custom_content\/problem_areas\/(.+)$/, p)) {
     return {
       weak_phonemes: ['r', 'u'],
       difficult_words: ['apprendre', 'français'],
@@ -409,7 +578,92 @@ export async function resolveMock(
     }
   }
 
+  // ---------- 管理员端 ----------
+  if (m === 'GET' && p === '/admin/overview') return { ok: true, data: ADMIN_OVERVIEW }
+  if (m === 'GET' && p === '/admin/classes') {
+    let items = ADMIN_CLASSES.slice()
+    if (q.key_word) items = items.filter((c) => c.class_name.includes(q.key_word))
+    if (q.language) items = items.filter((c) => c.language === q.language)
+    if (q.status) items = items.filter((c) => c.status === q.status)
+    return { ok: true, data: items }
+  }
+  if (m === 'POST' && p === '/admin/class/save') {
+    const payload = (body ?? {}) as any
+    return { ok: true, class_id: payload.class_id ?? `admin-class-${Date.now()}` }
+  }
+  if (m === 'GET' && route(/^\/admin\/class\/([^/]+)\/students$/, p)) {
+    const classId = p.split('/')[3]
+    const cls = ADMIN_CLASSES.find((c) => c.class_id === classId) ?? ADMIN_CLASSES[0]
+    return {
+      ok: true,
+      data: {
+        class_id: cls.class_id,
+        class_name: cls.class_name,
+        language: cls.language,
+        students: ADMIN_STUDENTS.filter((s) => s.class_id === cls.class_id),
+      },
+    }
+  }
+  if (m === 'GET' && route(/^\/admin\/class\/([^/]+)$/, p)) {
+    const classId = p.split('/')[3]
+    const cls = ADMIN_CLASSES.find((c) => c.class_id === classId) ?? ADMIN_CLASSES[0]
+    return { ok: true, data: cls }
+  }
+  if (m === 'POST' && p === '/admin/student/save') {
+    const payload = (body ?? {}) as any
+    return { ok: true, user_id: payload.user_id ?? `admin-student-${Date.now()}` }
+  }
+  if (m === 'POST' && p === '/admin/student/change_class') return { ok: true }
+  if (m === 'GET' && p === '/admin/students') {
+    let items = ADMIN_STUDENTS.slice()
+    if (q.key_word) items = items.filter((s) => s.name.includes(q.key_word) || s.stu_id.includes(q.key_word))
+    if (q.class_id) items = items.filter((s) => s.class_id === q.class_id)
+    return { ok: true, data: items }
+  }
+  if (m === 'GET' && route(/^\/admin\/student\/([^/]+)$/, p)) {
+    const userId = p.split('/')[3]
+    const stu = ADMIN_STUDENTS.find((s) => s.user_id === userId) ?? ADMIN_STUDENTS[0]
+    return { ok: true, data: stu }
+  }
+  if (m === 'GET' && p === '/admin/teachers') {
+    let items = ADMIN_TEACHERS.slice()
+    if (q.key_word) items = items.filter((t) => t.name.includes(q.key_word) || t.staff_id.includes(q.key_word))
+    if (q.subject) items = items.filter((t) => t.subject === q.subject)
+    if (q.status) items = items.filter((t) => t.status === q.status)
+    return { ok: true, data: items }
+  }
+  if (m === 'POST' && p === '/admin/teacher/save') {
+    const payload = (body ?? {}) as any
+    return { ok: true, teacher_id: payload.teacher_id ?? `admin-teacher-${Date.now()}` }
+  }
+  if (m === 'POST' && p === '/admin/teacher/assign') return { ok: true }
+  if (m === 'POST' && p === '/admin/teacher/unassign') return { ok: true }
+  if (m === 'GET' && route(/^\/admin\/teacher\/([^/]+)\/assignments$/, p)) {
+    const teacherId = p.split('/')[3]
+    const teacher = ADMIN_TEACHERS.find((t) => t.teacher_id === teacherId) ?? ADMIN_TEACHERS[0]
+    return {
+      ok: true,
+      data: {
+        teacher_id: teacher.teacher_id,
+        teacher_name: teacher.name,
+        staff_id: teacher.staff_id,
+        classes: ADMIN_CLASSES.map((c) => ({
+          class_id: c.class_id,
+          class_name: c.class_name,
+          language: c.language,
+          assigned: c.teacher_id === teacher.teacher_id,
+        })),
+      },
+    }
+  }
+  if (m === 'GET' && route(/^\/admin\/teacher\/([^/]+)$/, p)) {
+    const teacherId = p.split('/')[3]
+    const teacher = ADMIN_TEACHERS.find((t) => t.teacher_id === teacherId) ?? ADMIN_TEACHERS[0]
+    return { ok: true, data: teacher }
+  }
+
   // ---------- 教师端 ----------
+  if (m === 'GET' && p === '/teacher/templates') return { ok: true, data: TEACHER_TEMPLATES }
   if (m === 'GET' && p === '/teacher/basic_information') {
     return { total_classes: 3, total_students: 72, total_tasks: 30 }
   }
@@ -468,7 +722,7 @@ export async function resolveMock(
     return { __blob: true }
   }
   if (m === 'POST' && p === '/teacher/comment') return { success: true }
-  if (route(/^\/teacher\/class\/([^/]+)\/manage$/, m, p)) {
+  if (route(/^\/teacher\/class\/([^/]+)\/manage$/, p)) {
     return {
       class_id: 'mock-class-001',
       class_name: '法语 A 班',
@@ -479,9 +733,9 @@ export async function resolveMock(
       ],
     }
   }
-  if (route(/^\/teacher\/class\/([^/]+)\/add_student$/, m, p)) return { success: true }
-  if (route(/^\/teacher\/class\/([^/]+)\/remove_student$/, m, p)) return { success: true }
-  if (route(/^\/teacher\/class\/([^/]+)\/student\/([^/]+)\/analysis$/, m, p)) {
+  if (route(/^\/teacher\/class\/([^/]+)\/add_student$/, p)) return { success: true }
+  if (route(/^\/teacher\/class\/([^/]+)\/remove_student$/, p)) return { success: true }
+  if (route(/^\/teacher\/class\/([^/]+)\/student\/([^/]+)\/analysis$/, p)) {
     return {
       student_name: 'student',
       evaluation_count: 5,
@@ -492,7 +746,7 @@ export async function resolveMock(
       difficult_words: ['apprendre', 'français'],
     }
   }
-  if (route(/^\/teacher\/api\/student\/([^/]+)\/progress$/, m, p)) {
+  if (route(/^\/teacher\/api\/student\/([^/]+)\/progress$/, p)) {
     return {
       student_name: 'student',
       evaluation_count: 5,

@@ -7,9 +7,10 @@ import ToastHost from './components/ToastHost.vue'
 
 const route = useRoute()
 const isBare = computed(() => route.meta?.layout === 'bare')
-const isTeacher = computed(() => route.path.startsWith('/teacher'))
-const showHeader = computed(() => !isBare.value && !isTeacher.value)
-const showFooter = computed(() => !isBare.value && !isTeacher.value)
+const isDashboard = computed(() => route.path.startsWith('/teacher') || route.path.startsWith('/admin'))
+const showHeader = computed(() => !isBare.value && !isDashboard.value)
+// 首页为单屏测评页：通过 meta.hideFooter 隐藏页脚，释放纵向空间
+const showFooter = computed(() => !isBare.value && !isDashboard.value && !route.meta?.hideFooter)
 </script>
 
 <template>

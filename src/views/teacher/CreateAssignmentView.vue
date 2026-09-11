@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { getTeacherClasses, publishTeacherTask, segmentTeacherContent, type TeacherClassItem } from '../../api/endpoints'
+import { getTeacherClasses, publishTeacherTask, saveTeacherTemplate, segmentTeacherContent, type TaskMode, type TeacherClassItem } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
 import { useToast } from '../../composables/useToast'
 
@@ -9,13 +9,17 @@ const router = useRouter()
 const toast = useToast()
 const classesReq = useAsync<TeacherClassItem[]>()
 const saveReq = useAsync<{ success: boolean }>()
+const templateReq = useAsync<{ success: boolean }>()
 
 const title = ref('')
 const contentText = ref('')
-const maxSubmissions = ref(3)
-const selectedMode = ref('sentence')
+/** 留空表示不限次数（提交 null 给后端） */
+const maxSubmissions = ref<number | null>(3)
+const selectedMode = ref<TaskMode>('sentence')
 const taskType = ref<'homework' | 'practice'>('homework')
 const segmentedSentences = ref<string[]>([])
+const segmentEditorOpen = ref(false)
+const segmentDraft = ref<string[]>([])
 const classes = ref<TeacherClassItem[]>([])
 const selectedClassIds = ref<string[]>([])
 const notes = ref('')
@@ -47,20 +51,138 @@ const timeFieldConfigs = [
   { id: 'until', label: '截止时间' },
 ] as const
 
-const modes = [
-  { id: 'sentence', label: '单句模式', desc: '逐句拆分，逐句练习发音' },
-  { id: 'paragraph', label: '段落模式', desc: '按段落组织，适合长篇练习' },
-  { id: 'dialog', label: '对话模式', desc: '角色扮演，双人对话练习' },
+const modes: Array<{ id: TaskMode; label: string; desc: string }> = [
+  { id: 'sentence', label: '句子模式', desc: '正常评测，逐句练习发音' },
+  { id: 'word', label: '单词模式', desc: '仅评测音准，逐个单词纠音' },
+  { id: 'pair', label: '词对模式', desc: '对照练习，含相同音素的单词成对练' },
 ]
 
+/** 各模式的文案与切分提示，避免模板里堆三元表达式 */
+const modeCopy: Record<TaskMode, {
+  unit: string
+  segmentTitle: string
+  segmentEmpty: string
+  overviewTitle: string
+  overviewEmpty: string
+  contentHint: string
+  contentPlaceholder: string
+}> = {
+  sentence: {
+    unit: '句',
+    segmentTitle: '分句结果',
+    segmentEmpty: '输入文本后将自动分句',
+    overviewTitle: '句子概览',
+    overviewEmpty: '暂无分句',
+    contentHint: '输入多语种课文或对话内容',
+    contentPlaceholder: '请输入发布内容文本...',
+  },
+  word: {
+    unit: '词',
+    segmentTitle: '分词结果',
+    segmentEmpty: '输入单词后将自动分词',
+    overviewTitle: '单词概览',
+    overviewEmpty: '暂无单词',
+    contentHint: '每行一个单词，或用空格、逗号分隔',
+    contentPlaceholder: '请输入要练习的单词，例如：\nbitte\nBitte',
+  },
+  pair: {
+    unit: '对',
+    segmentTitle: '词对结果',
+    segmentEmpty: '输入词对后将自动整理',
+    overviewTitle: '词对概览',
+    overviewEmpty: '暂无词对',
+    contentHint: '每行一组词对，用空格、逗号或 / 分隔两个单词',
+    contentPlaceholder: '请输入词对，例如：\nBett / Beet\nbitte / bitten',
+  },
+}
+
+const modeText = computed(() => modeCopy[selectedMode.value])
+
+/** 句子模式下由后端分句接口切分 */
+const segmentByBackend = async (text: string): Promise<string[]> => {
+  try {
+    const res = await segmentTeacherContent(text)
+    return res.segments.length ? res.segments : [text]
+  } catch {
+    // 兜底：后端分句接口失败时前端自分句。用 match 保留句末标点，避免 split 丢弃标点
+    return (text.match(/[^.!?。！？\n]+[.!?。！？]*/g) || [])
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }
+}
+
+/** 单词模式：按换行/逗号/空白切词，单个元素 = 一次跟读 */
+const splitWords = (text: string) =>
+  text.split(/[\n,;，；、\s]+/).map((word) => word.trim()).filter(Boolean)
+
+/** 词对模式：每行一对，规范化为 `mot1, mot2`，一对 = 一次跟读 */
+const splitPairs = (text: string) =>
+  text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(/[,;，；、/|]+|\s+/).map((part) => part.trim()).filter(Boolean).join(', '))
+    .filter(Boolean)
+
 const taskTypes = [
-  { id: 'homework', label: '作业任务' },
-  { id: 'practice', label: '练习任务' },
+  { id: 'homework', label: '作业任务', hint: '老师可以看到学生反馈' },
+  { id: 'practice', label: '练习任务', hint: '老师看不到反馈，学生可自由练习' },
 ] as const
 
+/** 记录上一次切分所用的原文，避免内容未变时重复切分覆盖老师在弹窗里的修改 */
+const segmentSource = ref('')
+
 const onSegment = () => {
-  if (!contentText.value.trim()) return
+  const text = contentText.value.trim()
+  if (!text) return
+  if (text === segmentSource.value) return
   void segment()
+}
+
+/** 用新结果覆盖分句；仅在结果变化时弹出可修改确认窗口，避免每次失焦都弹 */
+const applySegments = (next: string[], openEditor = true) => {
+  const changed = next.join('\n') !== segmentedSentences.value.join('\n')
+  segmentedSentences.value = next
+  if (openEditor && changed && next.length) {
+    segmentDraft.value = [...next]
+    segmentEditorOpen.value = true
+  }
+}
+
+const addSegmentDraft = () => {
+  segmentDraft.value.push('')
+}
+
+const removeSegmentDraft = (index: number) => {
+  segmentDraft.value.splice(index, 1)
+}
+
+const cancelSegmentDraft = () => {
+  segmentEditorOpen.value = false
+}
+
+const confirmSegmentDraft = () => {
+  const cleaned = segmentDraft.value.map((item) => item.trim()).filter(Boolean)
+  if (!cleaned.length) {
+    toast.push('请至少保留一条内容', 'warning')
+    return
+  }
+  segmentedSentences.value = cleaned
+  segmentEditorOpen.value = false
+}
+
+const maxSubmissionsInput = (event: Event) => {
+  const raw = (event.target as HTMLInputElement).value.trim()
+  if (!raw) {
+    maxSubmissions.value = null
+    return
+  }
+  const value = Math.floor(Number(raw))
+  if (!Number.isFinite(value) || value < 1) {
+    maxSubmissions.value = null
+    return
+  }
+  maxSubmissions.value = Math.min(value, 99)
 }
 
 const selectedClasses = computed(() => classes.value.filter((item) => selectedClassIds.value.includes(item.class_id)))
@@ -219,21 +341,29 @@ const toIso = (value: string) => {
   return new Date(value).toISOString()
 }
 
-const segment = async () => {
+const segment = async (openEditor = true) => {
   const text = contentText.value.trim()
   if (!text) {
     segmentedSentences.value = []
+    segmentSource.value = ''
     return
   }
-  try {
-    const res = await segmentTeacherContent(text)
-    segmentedSentences.value = res.segments.length ? res.segments : [text]
-  } catch {
-    // 兜底：后端分句接口失败时前端自分句。用 match 保留句末标点，避免 split 丢弃标点
-    segmentedSentences.value = (text.match(/[^.!?。！？\n]+[.!?。！？]*/g) || [])
-      .map((s) => s.trim())
-      .filter(Boolean)
+  segmentSource.value = text
+  if (selectedMode.value === 'word') {
+    applySegments(splitWords(text), openEditor)
+    return
   }
+  if (selectedMode.value === 'pair') {
+    applySegments(splitPairs(text), openEditor)
+    return
+  }
+  applySegments(await segmentByBackend(text), openEditor)
+}
+
+const onModeSelect = (mode: TaskMode) => {
+  if (selectedMode.value === mode) return
+  selectedMode.value = mode
+  if (contentText.value.trim()) void segment()
 }
 
 const publish = async () => {
@@ -245,7 +375,7 @@ const publish = async () => {
     toast.push('请输入练习标题', 'warning')
     return
   }
-  if (!segmentedSentences.value.length) await segment()
+  if (!segmentedSentences.value.length) await segment(false)
   if (!segmentedSentences.value.length) {
     toast.push('请输入练习内容', 'warning')
     return
@@ -267,6 +397,7 @@ const publish = async () => {
       title: title.value.trim(),
       segments: segmentedSentences.value,
       notes: notes.value.trim() || null,
+      mode: selectedMode.value,
       taskType: taskType.value,
       maxAttempt: maxSubmissions.value,
       availableFrom: from,
@@ -279,8 +410,29 @@ const publish = async () => {
   }
 }
 
-const onSaveDraft = () => {
-  toast.push('后端暂未提供草稿状态，当前请使用保存并发布', 'info')
+const saveAsTemplate = async () => {
+  if (!title.value.trim()) {
+    toast.push('请输入模板标题', 'warning')
+    return
+  }
+  if (!segmentedSentences.value.length) await segment(false)
+  if (!segmentedSentences.value.length) {
+    toast.push('请输入练习内容', 'warning')
+    return
+  }
+  try {
+    await templateReq.run(() => saveTeacherTemplate({
+      title: title.value.trim(),
+      segments: segmentedSentences.value,
+      isPublic: true,
+    }))
+    toast.push('已保存为模板（同校公开）', 'success')
+  } catch {
+    toast.push(templateReq.error.value ?? '保存模板失败，请稍后重试', 'error')
+  }
+}
+const onSaveAsTemplate = () => {
+  void saveAsTemplate()
 }
 const onPublish = () => {
   void publish()
@@ -303,24 +455,97 @@ onMounted(() => {
         <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
           <div class="flex flex-col gap-4">
             <h3 class="text-sm font-black text-[#1F2937]">任务基础信息</h3>
-            <div class="flex items-center gap-3">
-              <input
-                v-model="title"
-                type="text"
-                placeholder="练习标题"
-                class="flex-1 px-4 py-3 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
-              />
+            <input
+              v-model="title"
+              type="text"
+              placeholder="练习标题"
+              class="w-full px-4 py-3 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
+            />
+            <div class="flex flex-col gap-2">
+              <span class="text-xs font-black text-[#64748B]">任务类型</span>
               <div class="flex items-center gap-2">
-                <span class="text-xs font-bold text-[#9CA3AF]">最大提交次数</span>
-                <input
-                  v-model.number="maxSubmissions"
-                  type="number"
-                  min="1"
-                  max="99"
-                  class="w-16 px-3 py-3 rounded-lg border border-[#E2E8F0] text-sm text-center font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
-                />
+                <div v-for="item in taskTypes" :key="item.id" class="relative group">
+                  <button
+                    type="button"
+                    :class="[
+                      'px-4 py-2 rounded-lg border text-xs font-black transition-colors',
+                      taskType === item.id
+                        ? 'bg-[#356B00] border-[#356B00] text-white'
+                        : 'bg-white border-[#E2E8F0] text-[#64748B] hover:border-[#58CC02]',
+                    ]"
+                    @click="taskType = item.id"
+                  >
+                    {{ item.label }}
+                  </button>
+                  <span
+                    class="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-30 w-max max-w-[220px] rounded-lg bg-[#1F2937] px-3 py-2 text-xs font-bold leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
+                  >
+                    {{ item.hint }}
+                  </span>
+                </div>
               </div>
             </div>
+            <textarea
+              v-model="notes"
+              placeholder="任务备注（可选）"
+              class="w-full h-20 rounded-lg border border-[#E2E8F0] p-3 text-sm font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none"
+            />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-0">
+          <div
+            v-for="mode in modes"
+            :key="mode.id"
+            :class="[
+              'bg-white rounded-xl p-6 flex flex-col gap-2 cursor-pointer transition-colors border shadow-[0px_4px_20px_rgba(0,0,0,0.04)]',
+              selectedMode === mode.id
+                ? 'border-[#356B00] border-2'
+                : 'border-[#F1F5F9] hover:border-[#58CC02]/20',
+            ]"
+            @click="onModeSelect(mode.id)"
+          >
+            <h3 class="text-sm font-black text-[#1F2937]">{{ mode.label }}</h3>
+            <p class="text-xs font-bold text-[#9CA3AF]">{{ mode.desc }}</p>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
+          <div class="flex items-center gap-3">
+            <span class="text-sm font-black text-[#1F2937]">内容文本</span>
+            <span class="text-xs font-bold text-[#9CA3AF]">{{ modeText.contentHint }}</span>
+          </div>
+          <textarea
+            v-model="contentText"
+            class="w-full h-44 rounded-xl border border-[#E2E8F0] p-4 text-sm text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none"
+            :placeholder="modeText.contentPlaceholder"
+            @blur="onSegment"
+          />
+        </div>
+
+        <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
+          <div class="flex flex-col gap-4">
+            <h3 class="text-sm font-black text-[#1F2937]">{{ modeText.segmentTitle }}</h3>
+          </div>
+
+          <div v-if="segmentedSentences.length === 0" class="flex items-center justify-center py-8">
+            <p class="text-sm font-bold text-[#9CA3AF]">{{ modeText.segmentEmpty }}</p>
+          </div>
+          <div v-else class="flex flex-col gap-2">
+            <div
+              v-for="(sentence, idx) in segmentedSentences"
+              :key="idx"
+              class="flex items-center gap-3 px-4 py-2 bg-[#F8FAFC] rounded-lg"
+            >
+              <span class="text-xs font-black text-[#9CA3AF] w-8 shrink-0">#{{ idx + 1 }}</span>
+              <span class="text-sm font-bold text-[#1F2937]">{{ sentence }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
+          <div class="flex flex-col gap-4">
+            <h3 class="text-sm font-black text-[#1F2937]">开放时间与提交次数</h3>
             <div class="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 flex flex-col gap-3">
               <div class="flex items-center justify-between gap-3">
                 <span class="text-xs font-black text-[#64748B] uppercase tracking-widest">时间设置</span>
@@ -554,78 +779,18 @@ onMounted(() => {
                 </div>
               </div>
             </div>
-            <div class="flex items-center justify-between gap-3">
-              <div class="flex items-center gap-2">
-                <button
-                  v-for="item in taskTypes"
-                  :key="item.id"
-                  type="button"
-                  :class="[
-                    'px-4 py-2 rounded-lg border text-xs font-black transition-colors',
-                    taskType === item.id
-                      ? 'bg-[#356B00] border-[#356B00] text-white'
-                      : 'bg-white border-[#E2E8F0] text-[#64748B] hover:border-[#58CC02]',
-                  ]"
-                  @click="taskType = item.id"
-                >
-                  {{ item.label }}
-                </button>
-              </div>
-            </div>
-            <textarea
-              v-model="notes"
-              placeholder="任务备注（可选）"
-              class="w-full h-20 rounded-lg border border-[#E2E8F0] p-3 text-sm font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none"
-            />
-          </div>
-        </div>
-
-        <div class="grid grid-cols-3 gap-0">
-          <div
-            v-for="mode in modes"
-            :key="mode.id"
-            :class="[
-              'bg-white rounded-xl p-6 flex flex-col gap-2 cursor-pointer transition-colors border shadow-[0px_4px_20px_rgba(0,0,0,0.04)]',
-              selectedMode === mode.id
-                ? 'border-[#356B00] border-2'
-                : 'border-[#F1F5F9] hover:border-[#58CC02]/20',
-            ]"
-            @click="selectedMode = mode.id"
-          >
-            <h3 class="text-sm font-black text-[#1F2937]">{{ mode.label }}</h3>
-            <p class="text-xs font-bold text-[#9CA3AF]">{{ mode.desc }}</p>
-          </div>
-        </div>
-
-        <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
-          <div class="flex items-center gap-3">
-            <span class="text-sm font-black text-[#1F2937]">内容文本</span>
-            <span class="text-xs font-bold text-[#9CA3AF]">输入多语种课文或对话内容</span>
-          </div>
-          <textarea
-            v-model="contentText"
-            class="w-full h-44 rounded-xl border border-[#E2E8F0] p-4 text-sm text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none"
-            placeholder="请输入发布内容文本..."
-            @blur="onSegment"
-          />
-        </div>
-
-        <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
-          <div class="flex flex-col gap-4">
-            <h3 class="text-sm font-black text-[#1F2937]">分句结果</h3>
-          </div>
-
-          <div v-if="segmentedSentences.length === 0" class="flex items-center justify-center py-8">
-            <p class="text-sm font-bold text-[#9CA3AF]">输入文本后将自动分句</p>
-          </div>
-          <div v-else class="flex flex-col gap-2">
-            <div
-              v-for="(sentence, idx) in segmentedSentences"
-              :key="idx"
-              class="flex items-center gap-3 px-4 py-2 bg-[#F8FAFC] rounded-lg"
-            >
-              <span class="text-xs font-black text-[#9CA3AF] w-8 shrink-0">#{{ idx + 1 }}</span>
-              <span class="text-sm font-bold text-[#1F2937]">{{ sentence }}</span>
+            <div class="flex items-center gap-3">
+              <span class="text-xs font-bold text-[#9CA3AF]">最大提交次数</span>
+              <input
+                :value="maxSubmissions ?? ''"
+                type="number"
+                min="1"
+                max="99"
+                placeholder="不限"
+                class="w-20 px-3 py-3 rounded-lg border border-[#E2E8F0] text-sm text-center font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
+                @input="maxSubmissionsInput"
+              />
+              <span class="text-xs font-bold text-[#9CA3AF]">留空表示不限次数</span>
             </div>
           </div>
         </div>
@@ -676,9 +841,9 @@ onMounted(() => {
       </div>
 
       <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4">
-        <h3 class="text-sm font-black text-[#1F2937]">句子概览</h3>
+        <h3 class="text-sm font-black text-[#1F2937]">{{ modeText.overviewTitle }}</h3>
         <div v-if="segmentedSentences.length === 0" class="text-center py-4">
-          <p class="text-xs font-bold text-[#9CA3AF]">暂无分句</p>
+          <p class="text-xs font-bold text-[#9CA3AF]">{{ modeText.overviewEmpty }}</p>
         </div>
         <div v-else class="flex flex-col gap-4">
           <div
@@ -691,16 +856,17 @@ onMounted(() => {
           </div>
         </div>
         <div v-if="segmentedSentences.length > 0" class="bg-[rgba(53,107,0,0.05)] rounded-xl border border-[rgba(53,107,0,0.1)] p-4 text-xs font-bold text-[#356B00]">
-          {{ segmentedSentences.length }} 个句子 · {{ taskType === 'homework' ? '作业任务' : '练习任务' }}
+          {{ segmentedSentences.length }} 个{{ modeText.unit }} · {{ taskType === 'homework' ? '作业任务' : '练习任务' }}
         </div>
       </div>
 
       <button
         type="button"
-        class="w-full bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] py-4 text-center text-sm font-bold text-[#334155] hover:bg-[#F8FAFC] transition-colors"
-        @click="onSaveDraft"
+        class="w-full bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] py-4 text-center text-sm font-bold text-[#334155] hover:bg-[#F8FAFC] transition-colors disabled:text-[#CBD5E1] disabled:hover:bg-white"
+        @click="onSaveAsTemplate"
+        :disabled="templateReq.loading.value"
       >
-        保存为草稿
+        {{ templateReq.loading.value ? '保存中...' : '保存为模板' }}
       </button>
 
       <button
@@ -711,6 +877,66 @@ onMounted(() => {
       >
         {{ saveReq.loading.value ? '发布中...' : '保存并发布' }}
       </button>
+    </div>
+
+    <div
+      v-if="segmentEditorOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+      @click.self="cancelSegmentDraft"
+    >
+      <div class="w-full max-w-2xl max-h-[80vh] rounded-2xl bg-white shadow-[0px_24px_70px_rgba(15,23,42,0.24)] flex flex-col">
+        <div class="px-6 pt-6 pb-4 border-b border-[#F1F5F9] flex flex-col gap-1">
+          <h3 class="text-base font-black text-[#1F2937]">确认{{ modeText.segmentTitle }}</h3>
+          <p class="text-xs font-bold text-[#9CA3AF]">请核对自动切分结果，可直接修改、删除或补充后再发布</p>
+        </div>
+        <div class="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-2">
+          <div
+            v-for="(item, idx) in segmentDraft"
+            :key="idx"
+            class="flex items-center gap-2"
+          >
+            <span class="text-xs font-black text-[#9CA3AF] w-8 shrink-0">#{{ idx + 1 }}</span>
+            <input
+              v-model="segmentDraft[idx]"
+              type="text"
+              class="flex-1 px-3 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+            />
+            <button
+              type="button"
+              class="w-9 h-9 shrink-0 rounded-lg border border-[#E2E8F0] text-[#BA1A1A] font-black hover:bg-[#FEF2F2] transition-colors"
+              @click="removeSegmentDraft(idx)"
+            >
+              ×
+            </button>
+          </div>
+          <button
+            type="button"
+            class="mt-1 self-start px-3 py-2 rounded-lg border border-dashed border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
+            @click="addSegmentDraft"
+          >
+            ＋ 添加一条
+          </button>
+        </div>
+        <div class="px-6 py-4 border-t border-[#F1F5F9] flex items-center justify-between gap-3">
+          <span class="text-xs font-bold text-[#9CA3AF]">共 {{ segmentDraft.length }} 个{{ modeText.unit }}</span>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-xs font-black text-[#64748B] hover:bg-[#F8FAFC] transition-colors"
+              @click="cancelSegmentDraft"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              class="px-4 py-2 rounded-lg bg-[#356B00] text-xs font-black text-white hover:bg-[#2E5E00] transition-colors"
+              @click="confirmSegmentDraft"
+            >
+              确认并应用
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>

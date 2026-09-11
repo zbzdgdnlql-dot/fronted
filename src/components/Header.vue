@@ -15,7 +15,6 @@ const classMenuOpen = ref(false)
 const studentLinks = [
   { name: '主页', path: '/' },
   { name: '任务', path: '/tasks' },
-  { name: '历史', path: '/history' },
   { name: '档案资料', path: '/archive' },
   { name: '个人中心', path: '/student/profile' },
   { name: '关于', path: '/about' },

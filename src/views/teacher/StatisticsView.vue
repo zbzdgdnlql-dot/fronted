@@ -26,9 +26,6 @@ import {
   getTeacherClasses,
   getTeacherClassStudents,
   getTeacherClassTasks,
-  getStudentAnalysis,
-  getStudentProgress,
-  type StudentProgressResponse,
 } from '../../api/endpoints'
 
 const route = useRoute()
@@ -222,19 +219,6 @@ function renderCharts() {
   }
 }
 
-async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
-  let idx = 0
-  const workers = Array(Math.min(limit, items.length))
-    .fill(0)
-    .map(async () => {
-      while (idx < items.length) {
-        const cur = items[idx++]
-        await fn(cur)
-      }
-    })
-  await Promise.all(workers)
-}
-
 function computeDistribution(scores: number[]) {
   const d = [0, 0, 0, 0]
   scores.forEach((s) => {
@@ -244,37 +228,6 @@ function computeDistribution(scores: number[]) {
     else d[3]++
   })
   return d
-}
-
-function aggregateTrend(progressList: (StudentProgressResponse | null)[]) {
-  const byDate = new Map<string, { oSum: number; oCnt: number; pSum: number; pCnt: number }>()
-  progressList.forEach((p) => {
-    if (!p?.scores) return
-    p.scores.forEach((item) => {
-      const raw = item.date || item.created_at
-      if (!raw) return
-      const key = String(raw).slice(0, 10)
-      const dims = [item.pronunciation, item.rhythm, item.fluency, item.completeness].filter((v) => v != null) as number[]
-      if (!dims.length) return
-      const overall = dims.reduce((a, b) => a + b, 0) / dims.length
-      let rec = byDate.get(key)
-      if (!rec) {
-        rec = { oSum: 0, oCnt: 0, pSum: 0, pCnt: 0 }
-        byDate.set(key, rec)
-      }
-      rec.oSum += overall
-      rec.oCnt++
-      if (item.pronunciation != null) {
-        rec.pSum += item.pronunciation
-        rec.pCnt++
-      }
-    })
-  })
-  const sorted = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-7)
-  const labels = sorted.map(([d]) => d.slice(5))
-  const overall = sorted.map(([, r]) => Math.round(r.oSum / r.oCnt))
-  const pron = sorted.map(([, r]) => (r.pCnt ? Math.round(r.pSum / r.pCnt) : 0))
-  return { labels, overall, pron }
 }
 
 async function loadClassData() {
@@ -310,43 +263,6 @@ async function loadClassData() {
       : new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 
     await loadCompletion()
-
-    const userIds = students.map((st) => String(st.user_id))
-    const dimSum = { pronunciation: 0, rhythm: 0, fluency: 0, completeness: 0 }
-    let dimCnt = 0
-    await mapWithConcurrency(userIds, 6, async (uid) => {
-      try {
-        const a = await getStudentAnalysis(classId.value, uid)
-        if (a?.dimension_scores) {
-          dimSum.pronunciation += a.dimension_scores.pronunciation
-          dimSum.rhythm += a.dimension_scores.rhythm
-          dimSum.fluency += a.dimension_scores.fluency
-          dimSum.completeness += a.dimension_scores.completeness
-          dimCnt++
-        }
-      } catch {
-        /* 单个学生分析失败不影响整体 */
-      }
-    })
-    if (dimCnt) {
-      averagePron.value = Math.round(dimSum.pronunciation / dimCnt)
-      averageRhythm.value = Math.round(dimSum.rhythm / dimCnt)
-      averageFluency.value = Math.round(dimSum.fluency / dimCnt)
-      averageCompleteness.value = Math.round(dimSum.completeness / dimCnt)
-    }
-
-    const progressList: (StudentProgressResponse | null)[] = []
-    await mapWithConcurrency(userIds, 6, async (uid) => {
-      try {
-        progressList.push(await getStudentProgress(uid))
-      } catch {
-        progressList.push(null)
-      }
-    })
-    const agg = aggregateTrend(progressList)
-    trendLabels.value = agg.labels
-    trendOverall.value = agg.overall
-    trendPron.value = agg.pron
 
     await nextTick()
     renderCharts()

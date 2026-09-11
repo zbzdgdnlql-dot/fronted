@@ -13,6 +13,7 @@ import {
   type StudentTaskRecordItem,
   type StudentTaskDetail,
   type SubmitStudentTestSessionResponse,
+  type TaskMode,
 } from '../../api/endpoints'
 import ErrorState from '../../components/ErrorState.vue'
 import ScoreRadarChart from '../../components/ScoreRadarChart.vue'
@@ -57,9 +58,70 @@ let recordedChunks: Blob[] = []
 let recordingTimer: number | null = null
 let discardRecordingOnStop = false
 
-const MIN_RECORDING_MS = 1500
 const MIN_AUDIO_BLOB_BYTES = 4096
 const MEDIA_RECORDER_TIMESLICE_MS = 250
+
+/** 各模式最短录音时长：单词短、词对中、句子最长 */
+const MIN_RECORDING_MS_BY_MODE: Record<TaskMode, number> = {
+  sentence: 1500,
+  word: 800,
+  pair: 1200,
+}
+
+/** 各模式文案，避免模板里堆三元表达式 */
+const MODE_COPY: Record<TaskMode, {
+  unit: string
+  noun: string
+  panelTitle: string
+  hint: string
+  currentLabel: string
+  emptyLabel: string
+  rerecordLabel: string
+  analyzingLabel: string
+  doneLabel: string
+  doneToast: string
+  evalCountLabel: string
+}> = {
+  sentence: {
+    unit: '句',
+    noun: '句子',
+    panelTitle: '测试句子',
+    hint: '逐句录音，停止后自动测评并保存测试记录。',
+    currentLabel: '当前录音句',
+    emptyLabel: '暂无句子',
+    rerecordLabel: '重录本句',
+    analyzingLabel: '正在自动测评当前句子',
+    doneLabel: '当前句已完成',
+    doneToast: '本句已自动测评完成',
+    evalCountLabel: '评测句数',
+  },
+  word: {
+    unit: '词',
+    noun: '单词',
+    panelTitle: '测试单词',
+    hint: '逐个录音，停止后自动评测音准并保存测试记录。',
+    currentLabel: '当前录音词',
+    emptyLabel: '暂无单词',
+    rerecordLabel: '重录本词',
+    analyzingLabel: '正在自动评测当前单词音准',
+    doneLabel: '当前词已完成',
+    doneToast: '本词已自动评测完成',
+    evalCountLabel: '评测词数',
+  },
+  pair: {
+    unit: '对',
+    noun: '词对',
+    panelTitle: '测试词对',
+    hint: '逐对录音，停止后自动评测并对照两个单词的音素。',
+    currentLabel: '当前录音词对',
+    emptyLabel: '暂无词对',
+    rerecordLabel: '重录本词对',
+    analyzingLabel: '正在自动评测当前词对',
+    doneLabel: '当前词对已完成',
+    doneToast: '本对已自动评测完成',
+    evalCountLabel: '评测对数',
+  },
+}
 
 const routeValue = (value: unknown) => {
   if (Array.isArray(value)) return value[0] ?? ''
@@ -68,6 +130,9 @@ const routeValue = (value: unknown) => {
 
 const taskId = computed(() => routeValue(route.params.taskId) || routeValue(route.query.taskId))
 const taskDetail = computed(() => taskReq.data.value?.data ?? null)
+const taskMode = computed<TaskMode>(() => taskDetail.value?.mode ?? 'sentence')
+const modeText = computed(() => MODE_COPY[taskMode.value])
+const minRecordingMs = computed(() => MIN_RECORDING_MS_BY_MODE[taskMode.value])
 const records = computed(() => recordsReq.data.value?.tasks ?? [])
 const segments = computed(() => taskDetail.value?.segments ?? [])
 const sentencePageSize = 4
@@ -118,10 +183,10 @@ const taskWindowMessage = computed(() => {
 const canRecord = computed(() => taskWindowOpen.value && !!currentSentence.value && !recording.value && !analyzing.value && !submitReq.loading.value)
 const recordingStartedAt = ref<number | null>(null)
 const recordingElapsedMs = ref(0)
-const canStopRecording = computed(() => recording.value && recordingElapsedMs.value >= MIN_RECORDING_MS)
+const canStopRecording = computed(() => recording.value && recordingElapsedMs.value >= minRecordingMs.value)
 const stopRecordingLabel = computed(() => {
   if (!recording.value || canStopRecording.value) return '停止录音'
-  const remainingMs = Math.max(0, MIN_RECORDING_MS - recordingElapsedMs.value)
+  const remainingMs = Math.max(0, minRecordingMs.value - recordingElapsedMs.value)
   return `至少录制 ${(remainingMs / 1000).toFixed(1)} 秒`
 })
 const canSubmit = computed(() => !!sessionId.value && taskWindowOpen.value && allSentencesCompleted.value && !recording.value && !analyzing.value && !submitReq.loading.value)
@@ -145,6 +210,8 @@ const currentResultScore = computed(() => {
 const radarItems = computed(() => {
   const score = currentResultScore.value
   if (!score) return []
+  // 单词模式仅评测音准，不展示流利度/完整度
+  if (taskMode.value === 'word') return [{ label: '音准', value: toNumber(score.accuracy) }]
   return [
     { label: '准确度', value: toNumber(score.accuracy) },
     { label: '流利度', value: toNumber(score.fluency) },
@@ -152,6 +219,30 @@ const radarItems = computed(() => {
   ]
 })
 const currentWords = computed(() => currentResultScore.value?.words ?? [])
+/** 词对模式下用于左右对照的两个单词 */
+const pairWords = computed(() => (taskMode.value === 'pair' ? currentWords.value.slice(0, 2) : []))
+const pairScores = computed(() => pairWords.value.map((word) => toNumber(word.pronunciation)))
+/** 词对中得分更低的一侧，用于标红提示；两侧同分或不足两词时为 -1 */
+const pairLowIndex = computed(() => {
+  if (pairScores.value.length < 2 || pairScores.value[0] === pairScores.value[1]) return -1
+  return pairScores.value[0] < pairScores.value[1] ? 0 : 1
+})
+const scorePanelTitle = computed(() => {
+  if (taskMode.value === 'word') return '本词音准评分'
+  if (taskMode.value === 'pair') return '本对对照评分'
+  return '本句多维评分'
+})
+const scorePanelSubtitle = computed(() => (taskMode.value === 'word' ? '仅评测音准（准确度）' : '流利度 · 准确度 · 完整度'))
+/** 评分面板主分的单位文案：单词模式显示音准分 */
+const scorePanelValueLabel = computed(() => (taskMode.value === 'word' ? '音准分' : '总分'))
+/** 单维雷达图渲染效果不佳，单词模式改用单维得分条 */
+const showRadar = computed(() => radarItems.value.length >= 3)
+/** 提交提示：按当前模式的说法组织文案 */
+const submitHint = computed(() => {
+  const { noun } = modeText.value
+  if (allSentencesCompleted.value) return `所有${noun}已完成测评，可以提交本次测试记录。`
+  return `还需完成 ${segments.value.length - completedCount.value} 个${noun}测评后才能提交。`
+})
 
 const blankResult = (): SentenceResult => ({
   status: 'pending',
@@ -183,6 +274,13 @@ const toNumber = (value: unknown) => {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
 }
+
+/** 展示用主分：单词模式只看音准，其余模式用总分 */
+const pickScore = (score: StudentPronTestAnalyzeResultScore | null | undefined) => {
+  if (!score) return null
+  return taskMode.value === 'word' ? toNumber(score.accuracy) : scoreFromResult(score)
+}
+const primaryScore = computed(() => pickScore(currentResultScore.value))
 
 const scoreColor = (value: number) => {
   if (value >= 80) return 'text-[#70C125]'
@@ -314,9 +412,10 @@ const startRecording = async () => {
       resetRecordingTimer()
       stopStream()
       if (discardRecordingOnStop) return
-      if (elapsedMs < MIN_RECORDING_MS) {
-        setCurrentResult({ status: 'error', error: '录音时间过短，请至少录制 1.5 秒后重试' })
-        toast.push('录音时间过短，请至少录制 1.5 秒后重试', 'error')
+      if (elapsedMs < minRecordingMs.value) {
+        const message = `录音时间过短，请至少录制 ${(minRecordingMs.value / 1000).toFixed(1)} 秒后重试`
+        setCurrentResult({ status: 'error', error: message })
+        toast.push(message, 'error')
         return
       }
       if (!audio.size) {
@@ -359,7 +458,7 @@ const startRecording = async () => {
 const stopRecording = () => {
   if (recorder.value?.state === 'recording') {
     if (!canStopRecording.value) {
-      toast.push('请至少录制 1.5 秒后再停止', 'warning')
+      toast.push(`请至少录制 ${(minRecordingMs.value / 1000).toFixed(1)} 秒后再停止`, 'warning')
       return
     }
     recorder.value.requestData()
@@ -373,13 +472,15 @@ const analyzeCurrentSentence = async (audio: Blob) => {
   setCurrentResult({ status: 'analyzing', error: null })
 
   try {
-    const file = new File([audio], `sentence-${activeIndex.value + 1}.webm`, { type: audio.type || 'audio/webm' })
+    const file = new File([audio], `segment-${activeIndex.value + 1}.webm`, { type: audio.type || 'audio/webm' })
     const res = await analyzeStudentPronTest({
       audio: file,
       refText: currentSentence.value,
       taskId: taskId.value,
       sentenceSeq: activeIndex.value,
       lang: taskDetail.value?.language_type ?? 'fr',
+      // 单词模式按单词粒度评测（音准）；句子/词对模式按句子粒度
+      core: taskMode.value === 'word' ? 'word' : 'sent',
     })
 
     setCurrentResult({
@@ -391,7 +492,7 @@ const analyzeCurrentSentence = async (audio: Blob) => {
     })
 
     if (activeIndex.value < segments.value.length - 1) activeIndex.value += 1
-    toast.push('本句已自动测评完成', 'success')
+    toast.push(modeText.value.doneToast, 'success')
   } catch (error) {
     const message = error instanceof Error ? error.message : '自动测评失败，请重试'
     setCurrentResult({ status: 'error', error: message })
@@ -465,7 +566,7 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
         </button>
         <div class="flex flex-col gap-1">
           <h2 class="text-2xl font-black text-gray-900 tracking-tight">任务测试</h2>
-          <p class="text-sm font-bold text-gray-400">逐句录音，停止后自动测评并保存测试记录。</p>
+          <p class="text-sm font-bold text-gray-400">{{ modeText.hint }}</p>
         </div>
       </div>
 
@@ -474,7 +575,7 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
           Session: {{ sessionId ?? '未创建' }}
         </span>
         <span class="rounded-full bg-[#EAF0DD] px-4 py-2 text-xs font-black text-[#70C125]">
-          {{ completedCount }} / {{ segments.length }} 句
+          {{ completedCount }} / {{ segments.length }} {{ modeText.unit }}
         </span>
       </div>
     </div>
@@ -529,7 +630,7 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
             </div>
             <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 px-4 py-3">
               <div class="text-xs font-black text-gray-400 mb-1">完成进度</div>
-              <div class="text-base font-black text-gray-900">{{ completedCount }} / {{ segments.length }} 句</div>
+              <div class="text-base font-black text-gray-900">{{ completedCount }} / {{ segments.length }} {{ modeText.unit }}</div>
             </div>
           </div>
         </div>
@@ -549,7 +650,7 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
           <div class="flex flex-col gap-1">
             <h4 class="text-base font-black text-gray-900">提交整套测试</h4>
             <p class="text-sm font-bold text-gray-400">
-              {{ allSentencesCompleted ? '所有句子已完成测评，可以提交本次测试记录。' : `还需完成 ${segments.length - completedCount} 句测评后才能提交。` }}
+              {{ submitHint }}
             </p>
           </div>
           <button
@@ -569,9 +670,9 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
         <section class="xl:col-span-5 bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div class="flex flex-col gap-1">
-            <h3 class="text-xl font-black text-gray-900">测试句子</h3>
+            <h3 class="text-xl font-black text-gray-900">{{ modeText.panelTitle }}</h3>
             <p class="text-sm font-bold text-gray-400">
-              第 {{ segments.length ? pageStartIndex + 1 : 0 }}-{{ pageEndIndex }} 句，共 {{ segments.length }} 句
+              第 {{ segments.length ? pageStartIndex + 1 : 0 }}-{{ pageEndIndex }} {{ modeText.unit }}，共 {{ segments.length }} 个{{ modeText.noun }}
             </p>
           </div>
 
@@ -609,7 +710,7 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
           >
             <div class="flex flex-col gap-3">
               <div class="flex items-start justify-between gap-3">
-                <span class="text-xs font-black text-gray-400">第 {{ item.index + 1 }} 句</span>
+                <span class="text-xs font-black text-gray-400">第 {{ item.index + 1 }} {{ modeText.unit }}</span>
                 <span class="rounded-full px-3 py-1 text-xs font-black" :class="statusClass(results[item.index]?.status ?? 'pending')">
                   {{ statusLabel(results[item.index]?.status ?? 'pending') }}
                 </span>
@@ -626,7 +727,7 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
                   {{ results[item.index]?.error || '评测失败，请重试' }}
                 </template>
                 <template v-else>
-                {{ activeIndex === item.index ? '当前录音句' : '点击选择' }}
+                {{ activeIndex === item.index ? modeText.currentLabel : '点击选择' }}
                 </template>
               </span>
               <span v-if="results[item.index]?.score !== null" class="text-base font-black text-[#70C125]">
@@ -640,13 +741,13 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
         <section class="xl:col-span-7 bg-white border border-gray-100 rounded-[24px] p-6 md:p-8 shadow-sm flex flex-col gap-6">
         <div class="flex flex-col gap-2">
           <div class="flex items-center justify-between gap-4">
-            <h3 class="text-xl font-black text-gray-900">当前录音：第 {{ activeIndex + 1 }} 句</h3>
+            <h3 class="text-xl font-black text-gray-900">当前录音：第 {{ activeIndex + 1 }} {{ modeText.unit }}</h3>
             <span class="rounded-full px-3 py-1 text-xs font-black" :class="statusClass(results[activeIndex]?.status ?? 'pending')">
               {{ statusLabel(results[activeIndex]?.status ?? 'pending') }}
             </span>
           </div>
           <p class="rounded-3xl bg-[#F8F9FA] border border-gray-100 p-6 text-xl font-black leading-relaxed text-gray-900">
-            {{ currentSentence || '暂无句子' }}
+            {{ currentSentence || modeText.emptyLabel }}
           </p>
         </div>
 
@@ -687,17 +788,17 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
               @click="setCurrentResult(blankResult())"
             >
               <RotateCcw class="w-5 h-5" />
-              重录本句
+              {{ modeText.rerecordLabel }}
             </button>
           </div>
 
           <div v-if="analyzing" class="flex items-center gap-2 text-sm font-black text-blue-600">
             <Loader2 class="w-4 h-4 animate-spin" />
-            正在自动测评当前句子
+            {{ modeText.analyzingLabel }}
           </div>
           <div v-else-if="results[activeIndex]?.status === 'done'" class="flex items-center gap-2 text-sm font-black text-[#70C125]">
             <CheckCircle2 class="w-4 h-4" />
-            当前句已完成
+            {{ modeText.doneLabel }}
           </div>
           <div v-else-if="results[activeIndex]?.status === 'error'" class="flex items-center gap-2 text-sm font-black text-orange-600">
             <AlertCircle class="w-4 h-4" />
@@ -708,19 +809,60 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
         <div v-if="currentResultScore" class="rounded-3xl border border-gray-100 bg-[#F8F9FA] p-6 flex flex-col gap-5">
           <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div class="flex flex-col gap-1">
-              <h4 class="text-base font-black text-gray-900">本句多维评分</h4>
-              <p class="text-sm font-bold text-gray-400">流利度 · 准确度 · 完整度</p>
+              <h4 class="text-base font-black text-gray-900">{{ scorePanelTitle }}</h4>
+              <p class="text-sm font-bold text-gray-400">{{ scorePanelSubtitle }}</p>
             </div>
             <div class="rounded-2xl bg-white border border-gray-100 px-5 py-3 flex items-baseline gap-2">
-              <span class="text-2xl font-black text-[#70C125]">{{ toNumber(currentResultScore.total_score).toFixed(1) }}</span>
-              <span class="text-xs font-black text-gray-400">总分</span>
+              <span class="text-2xl font-black text-[#70C125]">{{ primaryScore === null ? '--' : primaryScore.toFixed(1) }}</span>
+              <span class="text-xs font-black text-gray-400">{{ scorePanelValueLabel }}</span>
+            </div>
+          </div>
+
+          <div v-if="taskMode === 'pair' && pairWords.length" class="flex flex-col gap-2">
+            <div class="text-xs font-black text-gray-400">词对对照（对照两个含相同音素的单词）</div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div
+                v-for="(word, index) in pairWords"
+                :key="`pair-${index}-${word.word}`"
+                class="rounded-2xl border p-4 flex flex-col gap-2"
+                :class="pairLowIndex === index ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-white'"
+              >
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-base font-black text-gray-900 truncate">{{ word.word }}</span>
+                  <span
+                    v-if="pairLowIndex === index"
+                    class="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-black text-red-600"
+                  >
+                    待加强
+                  </span>
+                </div>
+                <div class="text-2xl font-black" :class="scoreColor(toNumber(word.pronunciation))">
+                  {{ toNumber(word.pronunciation).toFixed(1) }}
+                </div>
+                <div v-if="word.phonemes?.length" class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="phoneme in word.phonemes"
+                    :key="`${phoneme.phoneme}-${phoneme.pronunciation}`"
+                    class="rounded-lg bg-[#F3F6F8] border border-gray-100 px-2 py-1 text-xs font-bold text-gray-600"
+                  >
+                    {{ phoneme.phoneme }}
+                    <span :class="scoreColor(toNumber(phoneme.pronunciation))">{{ toNumber(phoneme.pronunciation).toFixed(1) }}</span>
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <div class="rounded-2xl bg-white border border-gray-100 p-4">
-              <div class="text-xs font-black text-gray-400 mb-2">{{ radarItems.length }} 维雷达图</div>
-              <ScoreRadarChart :items="radarItems" :height="'240px'" />
+              <div class="text-xs font-black text-gray-400 mb-2">{{ showRadar ? `${radarItems.length} 维雷达图` : '音准得分' }}</div>
+              <ScoreRadarChart v-if="showRadar" :items="radarItems" :height="'240px'" />
+              <div v-else class="h-[240px] flex flex-col items-center justify-center gap-2">
+                <span class="text-4xl font-black" :class="scoreColor(toNumber(currentResultScore.accuracy))">
+                  {{ toNumber(currentResultScore.accuracy).toFixed(1) }}
+                </span>
+                <span class="text-xs font-black text-gray-400">音准（准确度）</span>
+              </div>
             </div>
 
             <div class="flex flex-col gap-2 min-w-0">
@@ -772,7 +914,7 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
           </div>
           <div class="rounded-2xl border border-gray-100 bg-[#F8F9FA] p-4">
             <div class="text-xs font-black text-gray-400 mb-1">已评测</div>
-            <div class="text-2xl font-black text-gray-900">{{ completedCount }} 句</div>
+            <div class="text-2xl font-black text-gray-900">{{ completedCount }} {{ modeText.unit }}</div>
           </div>
         </div>
 
@@ -791,7 +933,7 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
               <div class="text-2xl font-black text-gray-900">{{ submitResult.total_score.toFixed(1) }}</div>
             </div>
             <div class="rounded-2xl bg-white border border-[#DCEFCC] p-4">
-              <div class="text-xs font-black text-gray-400 mb-1">评测句数</div>
+              <div class="text-xs font-black text-gray-400 mb-1">{{ modeText.evalCountLabel }}</div>
               <div class="text-2xl font-black text-gray-900">{{ submitResult.evaluation_count }}</div>
             </div>
           </div>

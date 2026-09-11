@@ -2,10 +2,16 @@
 import { useRouter } from 'vue-router'
 import UserAccountMenu from '../UserAccountMenu.vue'
 
-defineProps<{
-  title?: string
-  showBack?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    title?: string
+    showBack?: boolean
+    badge?: string
+  }>(),
+  {
+    badge: '教师端',
+  },
+)
 
 const emit = defineEmits<{
   back: []
@@ -52,7 +58,7 @@ const onBack = () => {
 
     <div class="flex items-center gap-3 min-w-0">
       <span class="whitespace-nowrap text-xs font-black text-[#FBFBFA] bg-[rgba(77,124,15,0.65)] rounded-full px-2.5 py-1 leading-none tracking-wider">
-        教师端
+        {{ badge }}
       </span>
       <UserAccountMenu compact />
     </div>

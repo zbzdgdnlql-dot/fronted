@@ -1,23 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { ChevronRight } from 'lucide-vue-next'
 import { getTeacherDashboard } from '../api/endpoints'
 import { useAsync } from '../composables/useAsync'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonBlock from '../components/SkeletonBlock.vue'
 
-const router = useRouter()
 const req = useAsync<Awaited<ReturnType<typeof getTeacherDashboard>>>()
 
 const stats = computed(() => req.data.value)
 
 const load = async () => {
   await req.run(async () => getTeacherDashboard())
-}
-
-const goToClass = (classId: string) => {
-  router.push(`/teacher/classes/${classId}/organize`)
 }
 
 onMounted(load)
@@ -81,13 +74,9 @@ onMounted(load)
           <div
             v-for="(c, idx) in stats?.class_details ?? []"
             :key="idx"
-            class="bg-[#F8F9FA] border border-gray-100 rounded-3xl p-6 flex flex-col gap-2 cursor-pointer hover:bg-white hover:border-[#70C125] hover:shadow-md transition-all group"
-            @click="goToClass(c.class.class_id)"
+            class="bg-[#F8F9FA] border border-gray-100 rounded-3xl p-6 flex flex-col gap-2"
           >
-            <div class="flex items-center justify-between">
-              <div class="text-sm font-black text-gray-900">{{ c.class.class_name }}</div>
-              <ChevronRight class="w-4 h-4 text-gray-300 group-hover:text-[#70C125] transition-colors" />
-            </div>
+            <div class="text-sm font-black text-gray-900">{{ c.class.class_name }}</div>
             <div class="text-sm font-bold text-gray-500">学生数 {{ c.student_count }} · 作业数 {{ c.content_count }}</div>
           </div>
         </div>

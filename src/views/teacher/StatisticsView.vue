@@ -26,6 +26,10 @@ import {
   getTeacherClasses,
   getTeacherClassStudents,
   getTeacherClassTasks,
+  getTeacherTaskBasicInformation,
+  getTeacherTasks,
+  type TeacherClassTaskSummary,
+  type TeacherScoreSummary,
 } from '../../api/endpoints'
 
 const route = useRoute()
@@ -262,7 +266,7 @@ async function loadClassData() {
       ? new Date(String(latestEval)).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
       : new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 
-    await loadCompletion()
+    await loadTaskData()
 
     await nextTick()
     renderCharts()
@@ -273,7 +277,7 @@ async function loadClassData() {
   }
 }
 
-async function loadCompletion() {
+async function loadTaskData() {
   try {
     const tasks = await getTeacherClassTasks(classId.value)
     if (!tasks.length) {
@@ -283,9 +287,61 @@ async function loadCompletion() {
     const totalFinished = tasks.reduce((sum, t) => sum + t.finished_students_count, 0)
     const totalSlots = tasks.length * Math.max(1, studentCount.value)
     completionRate.value = totalSlots ? Math.round((totalFinished / totalSlots) * 100) : 0
+
+    await loadTaskDimensions(tasks)
   } catch {
     completionRate.value = 0
   }
+}
+
+function avgOf(values: Array<number | null | undefined>) {
+  const nums = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+  return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0
+}
+
+// 后端 task/basic_information 的 overall 恒为 null（返回键与路由取值不一致），
+// 这里用页面展示的四个维度均值兜底
+function overallFromSummary(info: TeacherScoreSummary) {
+  if (typeof info.overall === 'number') return info.overall
+  return avgOf([info.pronunciation, info.rhythm, info.fluency, info.integrity])
+}
+
+async function loadTaskDimensions(tasks: TeacherClassTaskSummary[]) {
+  // 无提交的任务在 task/basic_information 会因聚合结果为空而报错，先按提交数过滤
+  const candidates = tasks.filter((t) => t.finished_students_count > 0)
+  if (!candidates.length) return
+
+  const availableFrom = await getTeacherTasks()
+    .then((rows) => new Map(rows.map((t) => [t.task_id, t.available_from ?? ''])))
+    .catch(() => new Map<string, string>())
+  const sorted = [...candidates].sort((a, b) =>
+    String(availableFrom.get(a.task_id) ?? '').localeCompare(String(availableFrom.get(b.task_id) ?? '')),
+  )
+
+  const summaries = await Promise.all(
+    sorted.map(async (task) => {
+      try {
+        const info = await getTeacherTaskBasicInformation(classId.value, task.task_id)
+        const dims = [info.pronunciation, info.rhythm, info.fluency, info.integrity]
+        return dims.some((v) => typeof v === 'number') ? { task, info } : null
+      } catch {
+        return null
+      }
+    }),
+  )
+  const valid = summaries.filter(
+    (row): row is { task: TeacherClassTaskSummary; info: TeacherScoreSummary } => row !== null,
+  )
+  if (!valid.length) return
+
+  averagePron.value = Math.round(avgOf(valid.map((r) => r.info.pronunciation)))
+  averageRhythm.value = Math.round(avgOf(valid.map((r) => r.info.rhythm)))
+  averageFluency.value = Math.round(avgOf(valid.map((r) => r.info.fluency)))
+  averageCompleteness.value = Math.round(avgOf(valid.map((r) => r.info.integrity)))
+
+  trendLabels.value = valid.map((r) => (r.task.title.length > 10 ? `${r.task.title.slice(0, 10)}…` : r.task.title))
+  trendOverall.value = valid.map((r) => Math.round(overallFromSummary(r.info)))
+  trendPron.value = valid.map((r) => Math.round(r.info.pronunciation ?? 0))
 }
 
 function refreshData() {

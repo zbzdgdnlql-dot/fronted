@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { PlayCircle, Square } from 'lucide-vue-next'
+import { Loader2, PlayCircle, Square } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import {
   getTeacherEvaluationAudio,
@@ -158,6 +158,7 @@ const updateAudioVolume = () => {
 }
 
 const cleanupAudio = () => {
+  releaseWordAudio()
   if (currentAudio.value) {
     // 先解绑事件，避免清空 src 时触发 error/ended 造成"播放失败"误报
     currentAudio.value.onerror = null
@@ -214,6 +215,107 @@ const playEvaluationAudio = async (sentence: SentenceResult) => {
     toast.push(err?.message ?? '获取录音失败', 'error')
   } finally {
     if (loadingAudioId.value === sentence.id) loadingAudioId.value = null
+  }
+}
+
+// ---- 词级发音：没有独立接口，用整句用户录音按 start_ms / duration_ms 切片播放 ----
+const wordAudioKey = ref('')
+const wordAudioLoading = ref(false)
+const wordAudioPlaying = ref(false)
+let wordAudio: HTMLAudioElement | null = null
+let wordAudioUrl: string | null = null
+let wordAudioRafId = 0
+// 递增令牌：切换单词或停止播放时作废旧回调
+let wordAudioToken = 0
+
+const wordAudioId = (word: WordScoreItem) => `${activeSentence.value?.id ?? ''}:${word.start_ms ?? 0}:${word.word}`
+const isWordAudioActive = (word: WordScoreItem) =>
+  wordAudioKey.value === wordAudioId(word) && (wordAudioLoading.value || wordAudioPlaying.value)
+
+const releaseWordAudio = () => {
+  wordAudioToken += 1
+  if (wordAudioRafId) {
+    window.cancelAnimationFrame(wordAudioRafId)
+    wordAudioRafId = 0
+  }
+  if (wordAudio) {
+    wordAudio.ontimeupdate = null
+    wordAudio.onended = null
+    wordAudio.onerror = null
+    wordAudio.onloadedmetadata = null
+    wordAudio.pause()
+    wordAudio = null
+  }
+  if (wordAudioUrl) {
+    URL.revokeObjectURL(wordAudioUrl)
+    wordAudioUrl = null
+  }
+  wordAudioKey.value = ''
+  wordAudioLoading.value = false
+  wordAudioPlaying.value = false
+}
+
+// 再次点击同一单词停止，否则从该词的 start_ms 播放 duration_ms 时长
+const playWordAudio = async (word: WordScoreItem) => {
+  const sentence = activeSentence.value
+  if (!sentence) return
+  const key = wordAudioId(word)
+  if (isWordAudioActive(word)) {
+    releaseWordAudio()
+    return
+  }
+  const startMs = typeof word.start_ms === 'number' ? word.start_ms : NaN
+  const durationMs = typeof word.duration_ms === 'number' ? word.duration_ms : NaN
+  if (!Number.isFinite(startMs) || startMs < 0 || !Number.isFinite(durationMs) || durationMs <= 0) {
+    toast.push(`「${word.word}」暂无发音区间信息`, 'warning')
+    return
+  }
+  cleanupAudio()
+  const token = ++wordAudioToken
+  wordAudioKey.value = key
+  wordAudioLoading.value = true
+  try {
+    const blob = await getTeacherEvaluationAudio(sentence.id)
+    if (token !== wordAudioToken) return
+    const url = URL.createObjectURL(blob)
+    wordAudioUrl = url
+    const audio = new Audio(url)
+    audio.preload = 'auto'
+    audio.volume = audioVolume.value
+    wordAudio = audio
+    await new Promise<void>((resolve, reject) => {
+      audio.onloadedmetadata = () => resolve()
+      audio.onerror = () => reject(new Error('音频加载失败'))
+      if (audio.readyState >= 1) resolve()
+    })
+    if (token !== wordAudioToken) return
+    audio.currentTime = startMs / 1000
+    wordAudioLoading.value = false
+    wordAudioPlaying.value = true
+    const endMs = startMs + durationMs
+    // 按音频时钟判停，比 timeupdate（约 250ms 粒度）精确
+    const watchProgress = () => {
+      if (token !== wordAudioToken) return
+      if (audio.currentTime * 1000 >= endMs) {
+        releaseWordAudio()
+        return
+      }
+      wordAudioRafId = window.requestAnimationFrame(watchProgress)
+    }
+    wordAudioRafId = window.requestAnimationFrame(watchProgress)
+    audio.onended = () => {
+      if (token === wordAudioToken) releaseWordAudio()
+    }
+    audio.onerror = () => {
+      if (token !== wordAudioToken) return
+      toast.push('音频播放失败', 'error')
+      releaseWordAudio()
+    }
+    await audio.play()
+  } catch (error) {
+    if (token !== wordAudioToken) return
+    releaseWordAudio()
+    toast.push(error instanceof Error ? error.message : '音频获取失败，请稍后重试', 'error')
   }
 }
 
@@ -739,9 +841,28 @@ onBeforeUnmount(cleanupAudio)
                                 {{ word.error_type }}
                               </span>
                             </div>
-                            <span class="text-xs font-black" :class="scoreColor(toNumber(word.pronunciation))">
-                              {{ toNumber(word.pronunciation).toFixed(1) }} 分
-                            </span>
+                            <div class="flex shrink-0 items-center gap-1.5">
+                              <span class="text-xs font-black tabular-nums" :class="scoreColor(toNumber(word.pronunciation))">
+                                {{ toNumber(word.pronunciation).toFixed(1) }} 分
+                              </span>
+                              <!-- 播放该单词的用户发音：整句录音按 start_ms/duration_ms 切片 -->
+                              <button
+                                type="button"
+                                class="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors disabled:cursor-wait"
+                                :class="
+                                  isWordAudioActive(word)
+                                    ? 'bg-[#58CC02] text-white'
+                                    : 'bg-[#EBF9E6] text-[#356B00] hover:bg-[#DFF5D5]'
+                                "
+                                :title="isWordAudioActive(word) ? '停止播放' : '播放该词发音'"
+                                :disabled="wordAudioLoading && isWordAudioActive(word)"
+                                @click="playWordAudio(word)"
+                              >
+                                <Loader2 v-if="wordAudioLoading && isWordAudioActive(word)" class="h-3.5 w-3.5 animate-spin" />
+                                <Square v-else-if="isWordAudioActive(word)" class="h-3.5 w-3.5" />
+                                <PlayCircle v-else class="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
                           <div v-if="word.phonemes?.length" class="flex flex-wrap gap-1.5">
                             <span

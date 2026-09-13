@@ -245,6 +245,18 @@ describe('api/endpoints', () => {
     )
   })
 
+  it('main page test session sends segments and language required by backend', async () => {
+    await createStudentTestSession(null, ['Bonjour tout le monde.'], 'fr')
+
+    expect(request).toHaveBeenCalledWith(
+      'student/pron-test/create_session',
+      expect.objectContaining({
+        method: 'POST',
+        body: { source: 'main_page', segments: ['Bonjour tout le monde.'], language: 'fr' },
+      }),
+    )
+  })
+
   it('teacher basic information uses GET teacher/basic_information', async () => {
     await getTeacherBasicInformation()
     expect(request).toHaveBeenCalledWith('teacher/basic_information', expect.objectContaining({ method: 'GET' }))
@@ -340,7 +352,7 @@ describe('api/endpoints', () => {
     const call = (request as any).mock.calls.find((c: any[]) => c[0] === 'teacher/task/save')
     expect(call).toBeTruthy()
     expect(call[1]).toEqual(expect.objectContaining({ method: 'POST' }))
-    expect(call[1].body).toEqual(expect.objectContaining({ course: ['c1'], title: 't', available_from: expect.any(String), available_until: expect.any(String) }))
+    expect(call[1].body).toEqual(expect.objectContaining({ task_id: null, template_title: 't', is_public: true, course: ['c1'], title: 't', available_from: expect.any(String), available_until: expect.any(String) }))
   })
 
   it('publish teacher task uses POST teacher/task/save with create payload', async () => {
@@ -359,6 +371,8 @@ describe('api/endpoints', () => {
         method: 'POST',
         body: expect.objectContaining({
           task_id: null,
+          template_title: 'task',
+          is_public: true,
           course: ['c1', 'c2'],
           task_type: 'homework',
           title: 'task',

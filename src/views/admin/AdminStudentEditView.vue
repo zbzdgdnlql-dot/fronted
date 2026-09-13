@@ -26,9 +26,6 @@ const form = reactive({
 const inputClass =
   'w-full px-4 py-3 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFB] text-sm font-bold text-[#3C3C3C] placeholder:text-[#9CA3AF] focus:outline-none focus:ring-2 focus:ring-[#70C125]/30 focus:border-[#70C125] transition'
 
-const readonlyClass =
-  'w-full px-4 py-3 rounded-2xl border border-[#E2E8F0] bg-[#F1F5F9] text-sm font-bold text-[#9CA3AF] cursor-not-allowed'
-
 const goBack = () => router.push('/admin/students')
 
 const load = async () => {
@@ -45,13 +42,17 @@ const submit = async () => {
     toast.push('请输入学生姓名', 'warning')
     return
   }
+  if (!/^\d+$/.test(form.stu_id.trim())) {
+    toast.push('学号必须为纯数字', 'warning')
+    return
+  }
 
   submitting.value = true
   try {
     await saveAdminStudent({
       user_id: userId.value,
       name: form.name.trim(),
-      stu_id: form.stu_id,
+      stu_id: form.stu_id.trim(),
     })
     toast.push('学生信息已更新', 'success')
     goBack()
@@ -107,7 +108,7 @@ onMounted(() => {
             </div>
             <div>
               <label class="block mb-2 text-sm font-black text-gray-900">学号</label>
-              <input :value="form.stu_id" type="text" readonly :class="readonlyClass" />
+              <input v-model="form.stu_id" type="text" placeholder="如 10007（仅限数字）" :class="inputClass" />
             </div>
           </div>
 

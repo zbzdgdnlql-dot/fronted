@@ -219,6 +219,10 @@ export type WordScoreItem = {
   pronunciation: number
   overall?: number | null
   error_type?: string
+  /** 该词在整句用户录音中的起始时间（毫秒） */
+  start_ms?: number | null
+  /** 该词在整句用户录音中的持续时长（毫秒） */
+  duration_ms?: number | null
   phonemes?: PhonemeScoreItem[]
   syllables?: SyllableScoreItem[]
 }
@@ -262,6 +266,53 @@ export async function getStudentHistoryWords() {
   return request<{ success: boolean; words: string[] }>('student/history/words', { method: 'GET' })
 }
 
+export async function getStudentHistoryPhonemes() {
+  return request<{ success: boolean; phonemes: string[] }>('student/history/phonemes', { method: 'GET' })
+}
+
+export type HistoryRankingItem = {
+  word?: string
+  phoneme?: string
+  score: number
+}
+
+export type HistoryRanking = {
+  best_words: HistoryRankingItem[]
+  worst_words: HistoryRankingItem[]
+  best_phonemes: HistoryRankingItem[]
+  worst_phonemes: HistoryRankingItem[]
+}
+
+export async function getStudentHistoryRanking() {
+  return request<HistoryRanking>('student/history/ranking', { method: 'GET' })
+}
+
+export type HistoryWordDetail = {
+  word: string
+  average_score: number
+  max_score: number
+  min_score: number
+  count: number
+  scores: Array<{ score: number; date: string }>
+}
+
+export async function getStudentHistoryWordDetail(word: string) {
+  return request<HistoryWordDetail>(`student/history/word/${encodeURIComponent(word)}`, { method: 'GET' })
+}
+
+export type HistoryPhonemeDetail = {
+  phoneme: string
+  average_score: number
+  max_score: number
+  min_score: number
+  count: number
+  scores: Array<{ score: number; date: string }>
+}
+
+export async function getStudentHistoryPhonemeDetail(phoneme: string) {
+  return request<HistoryPhonemeDetail>(`student/history/phoneme/${encodeURIComponent(phoneme)}`, { method: 'GET' })
+}
+
 export type UserDetailClass = {
   class_id: string
   class_name: string
@@ -299,13 +350,26 @@ export type CreateStudentTestSessionResponse = {
   session_id: string
 }
 
-export async function createStudentTestSession(taskId?: string | number | null) {
+export async function createStudentTestSession(
+  taskId?: string | number | null,
+  segments?: string[] | null,
+  language?: string | null,
+) {
+  // 主页自由评测（source=main_page）后端强制校验 segments + language，
+  // 缺失会返回 400「缺少必要字段」；task 模式二者不需要。
+  const body: Record<string, unknown> = {
+    source: taskId ? 'task' : 'main_page',
+    task_id: taskId ?? undefined,
+  }
+  if (!taskId) {
+    body.segments = segments ?? undefined
+    body.language = language ?? undefined
+  }
   return request<CreateStudentTestSessionResponse>('student/pron-test/create_session', {
     method: 'POST',
-    body: {
-      source: taskId ? 'task' : 'main_page',
-      task_id: taskId ?? undefined,
-    },
+    body,
+    // main_page 模式后端要同步调用 Azure TTS 合成参考音频，默认 10s 容易超时
+    timeoutMs: taskId ? undefined : 60_000,
   })
 }
 
@@ -317,13 +381,22 @@ export type SubmitStudentTestSessionResponse = {
   average_score: number
 }
 
-export async function submitStudentTestSession(taskId?: string | number | null) {
+export async function submitStudentTestSession(
+  taskId?: string | number | null,
+  language?: string | null,
+) {
+  // 主页自由评测（source=main_page）后端提交时强制校验 language，
+  // 缺失会返回 400「缺少语种」；task 模式后端从模板取语种，不需要传。
+  const body: Record<string, unknown> = {
+    source: taskId ? 'task' : 'main_page',
+    task_id: taskId ?? undefined,
+  }
+  if (!taskId) {
+    body.language = language ?? undefined
+  }
   return request<SubmitStudentTestSessionResponse>('student/pron-test/submit_session', {
     method: 'POST',
-    body: {
-      source: taskId ? 'task' : 'main_page',
-      task_id: taskId ?? undefined,
-    },
+    body,
   })
 }
 
@@ -368,6 +441,25 @@ export async function analyzeStudentPronTest(params: StudentPronTestAnalyzeParam
     ref_text: string
     result_score: StudentPronTestAnalyzeResultScore
   }>('student/pron-test/analyze', { method: 'POST', body: fd, timeoutMs: 60_000 })
+}
+
+// 取回参考音频：main_page session 的逐句音频由 create_session 时合成并落盘，
+// task session 则由教师端模板生成，统一从 STDAudioFile 读取。
+export async function getSentenceStdAudio(taskSessionId: string, sentenceSeq: number) {
+  return requestBlob('student/task/sentence_stdaudio', {
+    method: 'POST',
+    body: { task_session_id: taskSessionId, sentence_seq: sentenceSeq },
+    timeoutMs: 30_000,
+  })
+}
+
+// 取回学生自己某一句的作答录音：学生端暂无独立路由，
+// 复用教师端按 evaluation_id 取音频的同一接口（学生 eval_id 与 evaluation_id 同源）。
+export async function getStudentEvaluationAudio(evaluationId: string) {
+  return requestBlob('teacher/evaluation/audio', {
+    method: 'GET',
+    query: { evaluation_id: evaluationId },
+  })
 }
 
 export type TeacherBasicInformation = {
@@ -518,6 +610,10 @@ export async function createTeacherContent(params: {
   return request<{ success: boolean }>('teacher/task/save', {
     method: 'POST',
     body: {
+      task_id: null,
+      // 同 publishTeacherTask：创建 TaskTemplate 的必填字段
+      template_title: params.title,
+      is_public: true,
       course: [params.classId],
       task_type: params.taskType ?? 'homework',
       title: params.title,
@@ -547,6 +643,10 @@ export async function publishTeacherTask(params: {
     method: 'POST',
     body: {
       task_id: null,
+      // 后端在 task_template_id 为空时会顺带创建 TaskTemplate，
+      // 这两个字段必传，否则 TaskTemplate.title / is_public 为 None 导致 500
+      template_title: params.title,
+      is_public: true,
       course: params.classIds,
       task_type: params.taskType,
       title: params.title,

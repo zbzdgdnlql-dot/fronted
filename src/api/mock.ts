@@ -173,103 +173,76 @@ const ADMIN_OVERVIEW = {
   ],
 }
 
+// 结构对齐 endpoints.ts 的 BackendClass（/admin/classes 返回数组）
 const ADMIN_CLASSES = [
   {
     class_id: 'admin-class-001',
-    class_name: '初级英语 A班',
-    language: '英语',
-    language_code: 'EN',
+    class_name: '初级日语 A班',
+    description: '零基础日语入门，掌握五十音图与日常问候语。',
+    teachers: [{ user_id: 1001, username: '李思远' }],
+    language: 'jp',
     student_count: 24,
-    teacher_id: 'admin-teacher-001',
-    teacher_name: '李老师',
-    status: 'active',
-    description: '零基础英语入门，掌握字母、音标与日常问候语。',
-    start_date: '2026-03-01',
-    capacity: 30,
   },
   {
     class_id: 'admin-class-002',
     class_name: '商务法语 B班',
-    language: '法语',
-    language_code: 'FR',
-    student_count: 18,
-    teacher_id: 'admin-teacher-002',
-    teacher_name: '王老师',
-    status: 'active',
     description: '面向商务场景的法语听说训练。',
-    start_date: '2026-03-12',
-    capacity: 24,
+    teachers: [{ user_id: 1002, username: '王梦洁' }],
+    language: 'fr',
+    student_count: 18,
   },
   {
     class_id: 'admin-class-003',
-    class_name: '日语入门 C班',
-    language: '日语',
-    language_code: 'JP',
+    class_name: '德语进阶 C班',
+    description: '德语中级语法与口语表达强化。',
+    teachers: [{ user_id: 1003, username: '佐藤美咲' }],
+    language: 'de',
     student_count: 30,
-    teacher_id: 'admin-teacher-003',
-    teacher_name: '张老师',
-    status: 'ended',
-    description: '五十音图与基础会话，已完成全部课程。',
-    start_date: '2025-09-01',
-    capacity: 30,
   },
   {
     class_id: 'admin-class-004',
     class_name: '西班牙语 D班',
-    language: '西班牙语',
-    language_code: 'ES',
-    student_count: 21,
-    teacher_id: 'admin-teacher-004',
-    teacher_name: '刘老师',
-    status: 'active',
     description: '西班牙语语音与日常交流。',
-    start_date: '2026-04-02',
-    capacity: 28,
+    teachers: [{ user_id: 1004, username: '陈嘉禾' }],
+    language: 'sp',
+    student_count: 21,
   },
   {
     class_id: 'admin-class-005',
-    class_name: '韩语基础 E班',
-    language: '韩语',
-    language_code: 'KR',
+    class_name: '俄语基础 E班',
+    description: '俄语字母与基础语法入门。',
+    teachers: [{ user_id: 1005, username: '赵云飞' }],
+    language: 'ru',
     student_count: 15,
-    teacher_id: 'admin-teacher-005',
-    teacher_name: '陈老师',
-    status: 'ended',
-    description: '韩语字母与基础语法，已结课。',
-    start_date: '2025-10-08',
-    capacity: 20,
   },
   {
     class_id: 'admin-class-006',
-    class_name: '德语进阶 F班',
-    language: '德语',
-    language_code: 'DE',
+    class_name: '法语口语 F班',
+    description: '强化法语口语表达与语音语调。',
+    teachers: [{ user_id: 1006, username: '林晓雯' }],
+    language: 'fr',
     student_count: 12,
-    teacher_id: 'admin-teacher-006',
-    teacher_name: '赵老师',
-    status: 'active',
-    description: '德语中级语法与口语表达强化。',
-    start_date: '2026-05-06',
-    capacity: 18,
   },
 ]
 
+// 结构对齐 endpoints.ts 的 BackendTeacher（/admin/teachers 返回数组）
 const ADMIN_TEACHERS = [
-  { teacher_id: 'admin-teacher-001', name: '李思远', staff_id: 'T-1001', subject: '英语', class_count: 3, email: 'lisiyuan@aiduoyu.cn', status: 'active' },
-  { teacher_id: 'admin-teacher-002', name: '王梦洁', staff_id: 'T-1002', subject: '西语', class_count: 2, email: 'wangmengjie@aiduoyu.cn', status: 'active' },
-  { teacher_id: 'admin-teacher-003', name: '佐藤美咲', staff_id: 'T-1003', subject: '日语', class_count: 4, email: 'missao@aiduoyu.cn', status: 'active' },
-  { teacher_id: 'admin-teacher-004', name: '陈嘉禾', staff_id: 'T-1004', subject: '法语', class_count: 0, email: 'chenjiahe@aiduoyu.cn', status: 'inactive' },
-  { teacher_id: 'admin-teacher-005', name: '赵云飞', staff_id: 'T-1005', subject: '德语', class_count: 2, email: 'zhaoyunfei@aiduoyu.cn', status: 'active' },
-  { teacher_id: 'admin-teacher-006', name: '林晓雯', staff_id: 'T-1006', subject: '韩语', class_count: 1, email: 'linxiaowen@aiduoyu.cn', status: 'inactive' },
+  { user_id: 1001, username: '李思远', staff_id: 'T-1001', classes: [{ class_id: 'admin-class-001', class_name: '初级日语 A班' }], language: 'jp' },
+  { user_id: 1002, username: '王梦洁', staff_id: 'T-1002', classes: [{ class_id: 'admin-class-002', class_name: '商务法语 B班' }], language: 'fr' },
+  { user_id: 1003, username: '佐藤美咲', staff_id: 'T-1003', classes: [{ class_id: 'admin-class-003', class_name: '德语进阶 C班' }], language: 'de' },
+  { user_id: 1004, username: '陈嘉禾', staff_id: 'T-1004', classes: [{ class_id: 'admin-class-004', class_name: '西班牙语 D班' }], language: 'sp' },
+  { user_id: 1005, username: '赵云飞', staff_id: 'T-1005', classes: [{ class_id: 'admin-class-005', class_name: '俄语基础 E班' }], language: 'ru' },
+  { user_id: 1006, username: '林晓雯', staff_id: 'T-1006', classes: [{ class_id: 'admin-class-006', class_name: '法语口语 F班' }], language: 'fr' },
 ]
 
+// 结构对齐 endpoints.ts 的 BackendStudent（/admin/class/students 返回数组）
 const ADMIN_STUDENTS = [
-  { user_id: 'admin-student-001', name: '王小明', stu_id: 'S1001', class_id: 'admin-class-001', class_name: '初级英语 A班', language: '英语' },
-  { user_id: 'admin-student-002', name: '李华', stu_id: 'S1002', class_id: 'admin-class-001', class_name: '初级英语 A班', language: '英语' },
-  { user_id: 'admin-student-003', name: '张伟', stu_id: 'S1003', class_id: 'admin-class-002', class_name: '商务法语 B班', language: '法语' },
-  { user_id: 'admin-student-004', name: '赵芳', stu_id: 'S1004', class_id: 'admin-class-002', class_name: '商务法语 B班', language: '法语' },
-  { user_id: 'admin-student-005', name: '陈静', stu_id: 'S1005', class_id: 'admin-class-004', class_name: '西班牙语 D班', language: '西班牙语' },
-  { user_id: 'admin-student-006', name: '刘洋', stu_id: 'S1006', class_id: 'admin-class-006', class_name: '德语进阶 F班', language: '德语' },
+  { user_id: 2001, username: '王小明', student_id: 'S1001', class_id: 'admin-class-001' },
+  { user_id: 2002, username: '李华', student_id: 'S1002', class_id: 'admin-class-001' },
+  { user_id: 2003, username: '张伟', student_id: 'S1003', class_id: 'admin-class-002' },
+  { user_id: 2004, username: '赵芳', student_id: 'S1004', class_id: 'admin-class-002' },
+  { user_id: 2005, username: '陈静', student_id: 'S1005', class_id: 'admin-class-004' },
+  { user_id: 2006, username: '刘洋', student_id: 'S1006', class_id: 'admin-class-006' },
 ]
 
 const TEACHER_TEMPLATES = [
@@ -396,6 +369,47 @@ function route(re: RegExp, p: string): RegExpMatchArray | null {
   return p.match(re)
 }
 
+// ---------------- Mock 音频 ----------------
+
+// 真实后端返回的是录音二进制流，Mock 下没有真实录音。
+// 这里按路径生成一段可解码的短 WAV 提示音，避免播放器报「音频播放失败」。
+// 标准录音与我的录音使用不同音高，便于在无后端时区分两个播放入口。
+export function createMockAudioBlob(path: string): Blob {
+  const sampleRate = 8000
+  const totalSamples = 40000 // 约 5 秒，需覆盖 mock 单词的 start_ms + duration_ms 区间
+  const frequency = path.includes('sentence_stdaudio') ? 660 : 440
+  const bytes = new Uint8Array(44 + totalSamples * 2)
+  const view = new DataView(bytes.buffer)
+
+  const writeText = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i))
+  }
+
+  // WAV 头（PCM 16bit 单声道）
+  writeText(0, 'RIFF')
+  view.setUint32(4, 36 + totalSamples * 2, true)
+  writeText(8, 'WAVE')
+  writeText(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeText(36, 'data')
+  view.setUint32(40, totalSamples * 2, true)
+
+  for (let i = 0; i < totalSamples; i += 1) {
+    // 首尾淡入淡出，避免爆音
+    const fade = Math.min(1, i / 240, (totalSamples - i) / 240)
+    const sample = Math.sin((2 * Math.PI * frequency * i) / sampleRate) * 0.35 * fade
+    view.setInt16(44 + i * 2, Math.round(sample * 32767), true)
+  }
+
+  return new Blob([bytes], { type: 'audio/wav' })
+}
+
 export async function resolveMock(
   method: string,
   path: string,
@@ -432,7 +446,7 @@ export async function resolveMock(
   if (m === 'GET' && p === '/student/basic_information') {
     return {
       class_cnt: 1,
-      info: [{ class_id: 'mock-class-001', class_name: '法语 A 班', teacher_name: '张老师' }],
+      info: [{ class_id: 'mock-class-001', class_name: '法语 A 班', teacher_name: '张老师', language: 'fr' }],
     }
   }
   if (m === 'GET' && p === '/student/tasks') {
@@ -461,14 +475,61 @@ export async function resolveMock(
     }
   }
   if (m === 'GET' && p === '/student/task') {
-    return { tasks: SESSION_RECORDS }
+    // task-2 仅一次提交，用于验证「仅一次尝试直接展示」；其余任务返回多次提交
+    if (q.task_id === 'task-2') return { tasks: SESSION_RECORDS.slice(1, 2) }
+    return { tasks: SESSION_RECORDS.slice(0, 2) }
   }
   if (m === 'GET' && p === '/student/session') {
     return {
       success: true,
       details: [
-        { eval_id: 'eval-1', audio_file_id: null, line_number: 1, sentence_text: 'Bonjour, comment allez-vous ?', pronunciation: 88, rhythm: 90, fluency: 86, completeness: 92, total_score: 89, teacher_notes: '', created_at: '2026-08-10 10:20:00' },
-        { eval_id: 'eval-2', audio_file_id: null, line_number: 2, sentence_text: "Je m'appelle Marie.", pronunciation: 84, rhythm: 85, fluency: 82, completeness: 88, total_score: 85, teacher_notes: '', created_at: '2026-08-10 10:21:00' },
+        {
+          eval_id: 'eval-1',
+          audio_file_id: null,
+          line_number: 1,
+          sentence_text:
+            "Bonjour, je m'appelle Marie et je suis très heureuse de vous rencontrer aujourd'hui.",
+          pronunciation: 88,
+          rhythm: 90,
+          fluency: 86,
+          completeness: 92,
+          total_score: 89,
+          teacher_notes: '',
+          created_at: '2026-08-10 10:20:00',
+          words: [
+            { word: 'Bonjour', pronunciation: 92, overall: 92, error_type: 'None', start_ms: 0, duration_ms: 460, phonemes: [{ phoneme: 'b', pronunciation: 95 }, { phoneme: 'ɔ̃', pronunciation: 88 }, { phoneme: 'ʒ', pronunciation: 93 }, { phoneme: 'u', pronunciation: 90 }, { phoneme: 'ʁ', pronunciation: 74 }] },
+            { word: 'je', pronunciation: 90, overall: 90, error_type: 'None', start_ms: 500, duration_ms: 120, phonemes: [{ phoneme: 'ʒ', pronunciation: 90 }, { phoneme: 'ə', pronunciation: 88 }] },
+            { word: "m'appelle", pronunciation: 76, overall: 75, error_type: 'Mispronunciation', start_ms: 660, duration_ms: 460, phonemes: [{ phoneme: 'm', pronunciation: 92 }, { phoneme: 'a', pronunciation: 85 }, { phoneme: 'p', pronunciation: 88 }, { phoneme: 'ɛ', pronunciation: 62 }, { phoneme: 'l', pronunciation: 90 }] },
+            { word: 'Marie', pronunciation: 88, overall: 88, error_type: 'None', start_ms: 1160, duration_ms: 380, phonemes: [{ phoneme: 'm', pronunciation: 90 }, { phoneme: 'a', pronunciation: 88 }, { phoneme: 'ʁ', pronunciation: 71 }, { phoneme: 'i', pronunciation: 92 }] },
+            { word: 'et', pronunciation: 91, overall: 91, error_type: 'None', start_ms: 1580, duration_ms: 120, phonemes: [{ phoneme: 'e', pronunciation: 94 }] },
+            { word: 'je', pronunciation: 89, overall: 89, error_type: 'None', start_ms: 1740, duration_ms: 120, phonemes: [{ phoneme: 'ʒ', pronunciation: 89 }, { phoneme: 'ə', pronunciation: 87 }] },
+            { word: 'suis', pronunciation: 85, overall: 85, error_type: 'None', start_ms: 1900, duration_ms: 260, phonemes: [{ phoneme: 's', pronunciation: 88 }, { phoneme: 'ɥ', pronunciation: 70 }, { phoneme: 'i', pronunciation: 92 }] },
+            { word: 'très', pronunciation: 62, overall: 62, error_type: 'Mispronunciation', start_ms: 2200, duration_ms: 240, phonemes: [{ phoneme: 't', pronunciation: 85 }, { phoneme: 'ʁ', pronunciation: 58 }, { phoneme: 'ɛ', pronunciation: 65 }] },
+            { word: 'heureuse', pronunciation: 84, overall: 84, error_type: 'None', start_ms: 2480, duration_ms: 420, phonemes: [{ phoneme: 'ø', pronunciation: 80 }, { phoneme: 'ʁ', pronunciation: 72 }, { phoneme: 'z', pronunciation: 90 }] },
+            { word: 'de', pronunciation: 93, overall: 93, error_type: 'None', start_ms: 2940, duration_ms: 110, phonemes: [{ phoneme: 'd', pronunciation: 94 }, { phoneme: 'ə', pronunciation: 92 }] },
+            { word: 'vous', pronunciation: 55, overall: 55, error_type: 'Mispronunciation', start_ms: 3090, duration_ms: 220, phonemes: [{ phoneme: 'v', pronunciation: 82 }, { phoneme: 'u', pronunciation: 48 }] },
+            { word: 'rencontrer', pronunciation: 80, overall: 80, error_type: 'None', start_ms: 3350, duration_ms: 480, phonemes: [{ phoneme: 'ʁ', pronunciation: 75 }, { phoneme: 'ɑ̃', pronunciation: 78 }] },
+            { word: "aujourd'hui", pronunciation: 72, overall: 72, error_type: 'Mispronunciation', start_ms: 3870, duration_ms: 520, phonemes: [{ phoneme: 'o', pronunciation: 88 }, { phoneme: 'ʒ', pronunciation: 65 }, { phoneme: 'd', pronunciation: 90 }] },
+          ],
+        },
+        {
+          eval_id: 'eval-2',
+          audio_file_id: null,
+          line_number: 2,
+          sentence_text: "Je m'appelle Marie.",
+          pronunciation: 84,
+          rhythm: 85,
+          fluency: 82,
+          completeness: 88,
+          total_score: 85,
+          teacher_notes: '',
+          created_at: '2026-08-10 10:21:00',
+          words: [
+            { word: 'Je', pronunciation: 90, overall: 90, error_type: 'None', start_ms: 0, duration_ms: 260, phonemes: [{ phoneme: 'ʒ', pronunciation: 90 }, { phoneme: 'ə', pronunciation: 88 }] },
+            { word: "m'appelle", pronunciation: 76, overall: 75, error_type: 'Mispronunciation', start_ms: 300, duration_ms: 720, phonemes: [{ phoneme: 'm', pronunciation: 92 }, { phoneme: 'a', pronunciation: 85 }, { phoneme: 'p', pronunciation: 88 }, { phoneme: 'ɛ', pronunciation: 62 }, { phoneme: 'l', pronunciation: 90 }] },
+            { word: 'Marie', pronunciation: 88, overall: 88, error_type: 'None', start_ms: 1080, duration_ms: 620, phonemes: [{ phoneme: 'm', pronunciation: 90 }, { phoneme: 'a', pronunciation: 88 }, { phoneme: 'ʁ', pronunciation: 71 }, { phoneme: 'i', pronunciation: 92 }] },
+          ],
+        },
       ],
     }
   }
@@ -544,14 +605,13 @@ export async function resolveMock(
       sentence_seq: Number((body as any)?.sentence_seq ?? 0),
       ref_text: String((body as any)?.ref_text ?? ''),
       result_score: {
-        score: 86,
-        pronunciation: 84,
-        rhythm: 88,
+        total_score: 86,
+        accuracy: 84,
         fluency: 86,
         completeness: 90,
         words: [
-          { word: 'bonjour', score: 90, phonemes: [{ phoneme: 'r', score: 85 }] },
-          { word: 'merci', score: 92, phonemes: [] },
+          { word: 'bonjour', pronunciation: 90, phonemes: [{ phoneme: 'r', pronunciation: 85 }] },
+          { word: 'merci', pronunciation: 92, phonemes: [] },
         ],
       },
     }
@@ -559,6 +619,8 @@ export async function resolveMock(
   if (m === 'POST' && p === '/student/pron-test/submit_session') {
     return { ok: true, session_id: 'mock-session-1', total_score: 86, evaluation_count: 3, average_score: 86 }
   }
+  // 参考音频为二进制流：只要命中该路由，requestBlob 即返回 mock 音频 Blob。
+  if (m === 'POST' && p === '/student/task/sentence_stdaudio') return { __blob: true }
   if (route(/^\/student\/custom_content\/detail\/(.+)$/, p)) {
     return {
       session_id: 'mock-session-1',
@@ -579,17 +641,31 @@ export async function resolveMock(
   }
 
   // ---------- 管理员端 ----------
+  // 注意：endpoints.ts 里 admin/classes 与 admin/teachers 直接读取数组，
+  // 其余 admin 封装多在前端本地组装，因此这里只需返回基础数组/成功标记。
   if (m === 'GET' && p === '/admin/overview') return { ok: true, data: ADMIN_OVERVIEW }
-  if (m === 'GET' && p === '/admin/classes') {
-    let items = ADMIN_CLASSES.slice()
-    if (q.key_word) items = items.filter((c) => c.class_name.includes(q.key_word))
-    if (q.language) items = items.filter((c) => c.language === q.language)
-    if (q.status) items = items.filter((c) => c.status === q.status)
-    return { ok: true, data: items }
-  }
-  if (m === 'POST' && p === '/admin/class/save') {
+  if (m === 'GET' && p === '/admin/classes') return ADMIN_CLASSES.slice()
+  if (m === 'POST' && p === '/admin/class/create') {
     const payload = (body ?? {}) as any
-    return { ok: true, class_id: payload.class_id ?? `admin-class-${Date.now()}` }
+    return {
+      class_id: payload.class_id ?? `admin-class-${Date.now()}`,
+      class_name: payload.class_name ?? '新建班级',
+    }
+  }
+  if (m === 'POST' && p === '/admin/class/edit') return { success: true }
+  if (m === 'POST' && p === '/admin/class/students') {
+    const payload = (body ?? {}) as any
+    const classId = String(payload.class_id ?? '')
+    return ADMIN_STUDENTS.filter((s) => !classId || s.class_id === classId).map((s) => ({
+      user_id: s.user_id,
+      username: s.username,
+      student_id: s.student_id,
+    }))
+  }
+  if (m === 'POST' && p === '/admin/class/students/add') {
+    const payload = (body ?? {}) as any
+    const incoming = Array.isArray(payload.students) ? payload.students : []
+    return incoming.map((_item: any, index: number) => ({ user_id: Date.now() + index }))
   }
   if (m === 'GET' && route(/^\/admin\/class\/([^/]+)\/students$/, p)) {
     const classId = p.split('/')[3]
@@ -616,21 +692,19 @@ export async function resolveMock(
   if (m === 'POST' && p === '/admin/student/change_class') return { ok: true }
   if (m === 'GET' && p === '/admin/students') {
     let items = ADMIN_STUDENTS.slice()
-    if (q.key_word) items = items.filter((s) => s.name.includes(q.key_word) || s.stu_id.includes(q.key_word))
+    if (q.key_word) items = items.filter((s) => s.username.includes(q.key_word) || s.student_id.includes(q.key_word))
     if (q.class_id) items = items.filter((s) => s.class_id === q.class_id)
     return { ok: true, data: items }
   }
   if (m === 'GET' && route(/^\/admin\/student\/([^/]+)$/, p)) {
     const userId = p.split('/')[3]
-    const stu = ADMIN_STUDENTS.find((s) => s.user_id === userId) ?? ADMIN_STUDENTS[0]
+    const stu = ADMIN_STUDENTS.find((s) => String(s.user_id) === userId) ?? ADMIN_STUDENTS[0]
     return { ok: true, data: stu }
   }
-  if (m === 'GET' && p === '/admin/teachers') {
-    let items = ADMIN_TEACHERS.slice()
-    if (q.key_word) items = items.filter((t) => t.name.includes(q.key_word) || t.staff_id.includes(q.key_word))
-    if (q.subject) items = items.filter((t) => t.subject === q.subject)
-    if (q.status) items = items.filter((t) => t.status === q.status)
-    return { ok: true, data: items }
+  if (m === 'GET' && p === '/admin/teachers') return ADMIN_TEACHERS.slice()
+  if (m === 'POST' && p === '/admin/teacher/add') {
+    const payload = (body ?? {}) as any
+    return { user_id: Date.now(), username: payload.username ?? '新教师' }
   }
   if (m === 'POST' && p === '/admin/teacher/save') {
     const payload = (body ?? {}) as any
@@ -638,32 +712,45 @@ export async function resolveMock(
   }
   if (m === 'POST' && p === '/admin/teacher/assign') return { ok: true }
   if (m === 'POST' && p === '/admin/teacher/unassign') return { ok: true }
+  if (m === 'POST' && p === '/admin/user/edit') return { success: true }
+  if (m === 'POST' && p === '/admin/user/unlink_class') return { success: true }
   if (m === 'GET' && route(/^\/admin\/teacher\/([^/]+)\/assignments$/, p)) {
     const teacherId = p.split('/')[3]
-    const teacher = ADMIN_TEACHERS.find((t) => t.teacher_id === teacherId) ?? ADMIN_TEACHERS[0]
+    const teacher = ADMIN_TEACHERS.find((t) => String(t.user_id) === teacherId) ?? ADMIN_TEACHERS[0]
+    const assignedIds = new Set((teacher.classes ?? []).map((item) => item.class_id))
     return {
       ok: true,
       data: {
-        teacher_id: teacher.teacher_id,
-        teacher_name: teacher.name,
+        teacher_id: String(teacher.user_id),
+        teacher_name: teacher.username,
         staff_id: teacher.staff_id,
         classes: ADMIN_CLASSES.map((c) => ({
           class_id: c.class_id,
           class_name: c.class_name,
           language: c.language,
-          assigned: c.teacher_id === teacher.teacher_id,
+          assigned: assignedIds.has(c.class_id),
         })),
       },
     }
   }
   if (m === 'GET' && route(/^\/admin\/teacher\/([^/]+)$/, p)) {
     const teacherId = p.split('/')[3]
-    const teacher = ADMIN_TEACHERS.find((t) => t.teacher_id === teacherId) ?? ADMIN_TEACHERS[0]
+    const teacher = ADMIN_TEACHERS.find((t) => String(t.user_id) === teacherId) ?? ADMIN_TEACHERS[0]
     return { ok: true, data: teacher }
   }
 
   // ---------- 教师端 ----------
   if (m === 'GET' && p === '/teacher/templates') return { ok: true, data: TEACHER_TEMPLATES }
+  // 模板库页面走 getTeacherTemplates()：直接返回后端契约数组（BackendTaskTemplate[]）
+  if (m === 'GET' && p === '/teacher/task_templates') {
+    return TEACHER_TEMPLATES.map((tpl) => ({
+      task_template_id: tpl.template_id,
+      template_title: tpl.title,
+      segments: tpl.segments,
+      target_phoneme: tpl.phonemes.length ? tpl.phonemes : null,
+      creator: 99,
+    }))
+  }
   if (m === 'GET' && p === '/teacher/basic_information') {
     return { total_classes: 3, total_students: 72, total_tasks: 30 }
   }
@@ -713,9 +800,36 @@ export async function resolveMock(
   }
   if (m === 'POST' && p === '/teacher/task/save') return { success: true }
   if (m === 'POST' && p === '/teacher/task/delete') return { success: true }
-  if (m === 'GET' && p === '/teacher/get_session') {
+  if (m === 'POST' && p === '/teacher/get_session') {
     return [
-      { eval_id: 'eval-1', audio_file_id: null, line_number: 1, sentence_text: 'Bonjour, comment allez-vous ?', pronunciation: 88, rhythm: 90, fluency: 86, completeness: 92, total_score: 89, teacher_notes: '', created_at: '2026-08-10 10:20:00' },
+      {
+        eval_id: 'eval-1',
+        audio_file_id: null,
+        line_number: 1,
+        sentence_text: 'Bonjour, comment allez-vous ?',
+        pronunciation: 88,
+        rhythm: 90,
+        fluency: 86,
+        completeness: 92,
+        total_score: 89,
+        words: [{ word: 'bonjour', pronunciation: 90 }, { word: 'comment', pronunciation: 86 }],
+        teacher_notes: '',
+        created_at: '2026-08-10 10:20:00',
+      },
+      {
+        eval_id: 'eval-2',
+        audio_file_id: null,
+        line_number: 2,
+        sentence_text: "Je m'appelle Marie.",
+        pronunciation: 84,
+        rhythm: 85,
+        fluency: 82,
+        completeness: 88,
+        total_score: 85,
+        words: [{ word: 'appelle', pronunciation: 80 }, { word: 'Marie', pronunciation: 88 }],
+        teacher_notes: '',
+        created_at: '2026-08-10 10:21:00',
+      },
     ]
   }
   if (m === 'GET' && p === '/teacher/evaluation/audio') {

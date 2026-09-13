@@ -891,7 +891,7 @@ onMounted(() => {
         </div>
         <div class="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-2">
           <div
-            v-for="(item, idx) in segmentDraft"
+            v-for="(_segment, idx) in segmentDraft"
             :key="idx"
             class="flex items-center gap-2"
           >

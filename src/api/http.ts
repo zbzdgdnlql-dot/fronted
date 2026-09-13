@@ -1,5 +1,5 @@
 import { ApiError } from './errors'
-import { resolveMock } from './mock'
+import { createMockAudioBlob, resolveMock } from './mock'
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -154,7 +154,7 @@ export async function requestBlob(path: string, options: RequestOptions = {}): P
   // 本地 Mock 仅在显式开启 VITE_ENABLE_MOCK=true 时生效；默认走真实后端
   if (import.meta.env.VITE_ENABLE_MOCK === 'true') {
     const mock = await resolveMock(method, path, options.query, options.body)
-    if (mock !== null) return new Blob(['mock-audio'], { type: 'audio/mpeg' })
+    if (mock !== null) return createMockAudioBlob(path)
   }
 
   const headers: Record<string, string> = {

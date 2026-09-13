@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { BookOpen, ListTodo, ChevronRight } from 'lucide-vue-next'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 import type { StudentTaskItem } from '../../api/endpoints'
@@ -8,7 +9,7 @@ import {
   studentTaskAvailabilityLabels,
 } from '../../utils/studentTaskAvailability'
 
-defineProps<{
+const props = defineProps<{
   items: StudentTaskItem[]
   loading: boolean
   selectedTaskId: string | null
@@ -43,6 +44,93 @@ const completionLabel = (item: StudentTaskItem) => attemptCount(item) >= 1 ? 'co
 const completionClass = (item: StudentTaskItem) => {
   return attemptCount(item) >= 1 ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'
 }
+
+// ---- 排序：未完成在前、已完成置底；同组内按截止时间由近到远，无截止时间的排最后 ----
+const deadlineValue = (item: StudentTaskItem) => {
+  if (!item.available_until) return Number.POSITIVE_INFINITY
+  const time = new Date(item.available_until).getTime()
+  return Number.isNaN(time) ? Number.POSITIVE_INFINITY : time
+}
+
+const sortByDeadline = (list: StudentTaskItem[]) =>
+  [...list].sort((a, b) => deadlineValue(a) - deadlineValue(b))
+
+const isCompleted = (item: StudentTaskItem) => attemptCount(item) >= 1
+
+const unfinishedItems = computed(() => sortByDeadline(props.items.filter((item) => !isCompleted(item))))
+const finishedItems = computed(() => sortByDeadline(props.items.filter(isCompleted)))
+const hasFinishedGroup = computed(() => finishedItems.value.length > 0)
+
+const formatDeadline = (value: string | null | undefined) => {
+  if (!value) return '未设置'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '未设置'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+// ---- 列表高度：xl 单屏布局下按终端可用高度显示整条任务，超出部分滚动查看 ----
+const LIST_GAP = 12 // 列表 gap-3
+const PAGE_BOTTOM_PADDING = 32 // 页面 p-8
+const SECTION_GAP = 24 // aside gap-6
+const listEl = ref<HTMLElement | null>(null)
+const chaptersEl = ref<HTMLElement | null>(null)
+const listMaxHeight = ref<number | null>(null)
+
+const measureListHeight = () => {
+  const list = listEl.value
+  if (!list || props.loading || !window.matchMedia('(min-width: 1280px)').matches) {
+    listMaxHeight.value = null
+    return
+  }
+  const items = Array.from(list.children) as HTMLElement[]
+  if (!items.length) {
+    listMaxHeight.value = null
+    return
+  }
+  // 可用高度 = 视口底部 - 列表顶部 - 页面下边距 - 下方章节卡片高度 - 卡片间距
+  const chaptersHeight = chaptersEl.value?.getBoundingClientRect().height ?? 0
+  const available =
+    window.innerHeight - list.getBoundingClientRect().top - PAGE_BOTTOM_PADDING - chaptersHeight - SECTION_GAP
+  if (available <= 0) {
+    listMaxHeight.value = null
+    return
+  }
+  let total = 0
+  let shown = 0
+  for (let i = 0; i < items.length; i += 1) {
+    const next = total + (i > 0 ? LIST_GAP : 0) + items[i].offsetHeight
+    if (next > available) break
+    total = next
+    shown = i + 1
+  }
+  // 全部放得下则不限高；一条都放不下时交给容器自身滚动
+  listMaxHeight.value = shown === 0 || shown >= items.length ? null : total
+}
+
+const refreshLayout = () => {
+  void nextTick(measureListHeight)
+}
+
+watch(
+  () => props.items,
+  () => {
+    listMaxHeight.value = null
+    refreshLayout()
+  },
+  { flush: 'post' },
+)
+
+watch(() => props.loading, refreshLayout, { flush: 'post' })
+
+onMounted(() => {
+  window.addEventListener('resize', refreshLayout)
+  refreshLayout()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', refreshLayout)
+})
 </script>
 
 <template>
@@ -56,27 +144,71 @@ const completionClass = (item: StudentTaskItem) => {
         <h3 class="text-lg font-extrabold text-gray-900">班级内容</h3>
       </div>
 
-      <div class="flex flex-col gap-3">
+      <div
+        ref="listEl"
+        class="flex flex-col gap-3 overflow-y-auto pr-1"
+        :style="listMaxHeight ? { maxHeight: `${listMaxHeight}px` } : undefined"
+      >
         <template v-if="loading">
-          <SkeletonBlock class="h-20 w-full" />
-          <SkeletonBlock class="h-20 w-full" />
-          <SkeletonBlock class="h-20 w-full" />
+          <SkeletonBlock class="h-20 w-full shrink-0" />
+          <SkeletonBlock class="h-20 w-full shrink-0" />
+          <SkeletonBlock class="h-20 w-full shrink-0" />
         </template>
 
         <template v-else>
           <button
-            v-for="item in items"
+            v-for="item in unfinishedItems"
             :key="item.task_id"
             type="button"
             :class="[
-              'p-4 rounded-xl border-2 transition-all cursor-pointer relative overflow-hidden text-left',
+              'p-4 rounded-xl border-2 transition-all cursor-pointer relative overflow-hidden text-left shrink-0',
               item.task_id === selectedTaskId ? 'border-[#70C125] bg-[#F8FAFB]' : 'border-gray-100 bg-white hover:border-gray-200'
             ]"
             @click="$emit('select', item.task_id)"
           >
             <div v-if="item.task_id === selectedTaskId" class="absolute left-0 top-0 bottom-0 w-1 bg-[#70C125]"></div>
 
-            <h4 class="text-[15px] font-bold text-gray-900 mb-3">{{ item.title }}</h4>
+            <h4 class="text-[15px] font-bold text-gray-900 mb-2">{{ item.title }}</h4>
+            <p class="text-xs font-bold text-gray-400 mb-3">截止 {{ formatDeadline(item.available_until) }}</p>
+
+            <div class="flex items-center justify-between gap-3 flex-wrap">
+              <span
+                class="px-2 py-0.5 rounded text-xs font-black"
+                :class="taskStatusClass(item)"
+              >
+                {{ taskStatusLabel(item) }}
+              </span>
+              <span
+                class="px-2 py-0.5 rounded text-xs font-black"
+                :class="completionClass(item)"
+              >
+                {{ completionLabel(item) }}
+              </span>
+              <span class="text-xs font-medium text-gray-500">平均分: {{ item.avg_score < 0 ? '--' : item.avg_score.toFixed(1) }}</span>
+              <span class="text-xs font-black text-gray-400">已尝试 {{ attemptCount(item) }} 次</span>
+            </div>
+          </button>
+
+          <!-- 已完成分组分隔 -->
+          <div v-if="hasFinishedGroup" class="flex items-center gap-2 pt-1 pb-0.5 shrink-0">
+            <span class="text-xs font-black text-gray-400">已完成</span>
+            <span class="flex-1 h-px bg-gray-100"></span>
+          </div>
+
+          <button
+            v-for="item in finishedItems"
+            :key="item.task_id"
+            type="button"
+            :class="[
+              'p-4 rounded-xl border-2 transition-all cursor-pointer relative overflow-hidden text-left shrink-0',
+              item.task_id === selectedTaskId ? 'border-[#70C125] bg-[#F8FAFB]' : 'border-gray-100 bg-white hover:border-gray-200'
+            ]"
+            @click="$emit('select', item.task_id)"
+          >
+            <div v-if="item.task_id === selectedTaskId" class="absolute left-0 top-0 bottom-0 w-1 bg-[#70C125]"></div>
+
+            <h4 class="text-[15px] font-bold text-gray-900 mb-2">{{ item.title }}</h4>
+            <p class="text-xs font-bold text-gray-400 mb-3">截止 {{ formatDeadline(item.available_until) }}</p>
 
             <div class="flex items-center justify-between gap-3 flex-wrap">
               <span
@@ -100,7 +232,7 @@ const completionClass = (item: StudentTaskItem) => {
     </div>
 
     <!-- Chapters Section -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex-1">
+    <div ref="chaptersEl" class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex-1">
       <div class="flex items-center gap-3 mb-6">
         <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
           <ListTodo class="w-4 h-4 text-blue-500" />

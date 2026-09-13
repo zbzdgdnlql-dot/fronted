@@ -5,14 +5,11 @@ import TaskSidebar from './tasks/TaskSidebar.vue'
 import TaskMain from './tasks/TaskMain.vue'
 import ErrorState from '../components/ErrorState.vue'
 import {
-  getStudentSessionDetails,
   getStudentTaskDetail,
   getStudentTaskRecords,
   getStudentTasks,
-  type StudentSessionEvaluationItem,
   type StudentTaskDetail,
   type StudentTaskItem,
-  type StudentTaskRecordItem,
 } from '../api/endpoints'
 import { useAsync } from '../composables/useAsync'
 import { useToast } from '../composables/useToast'
@@ -23,12 +20,11 @@ const auth = useAuth()
 const router = useRouter()
 const listReq = useAsync<{ ok: boolean; data: StudentTaskItem[] }>()
 const taskDetailReq = useAsync<{ ok: boolean; data: StudentTaskDetail }>()
-const recordsReq = useAsync<{ tasks: StudentTaskRecordItem[] }>()
-const detailsReq = useAsync<{ success: boolean; details: StudentSessionEvaluationItem[] }>()
 
 const selectedTaskId = ref<string | null>(null)
-const selectedSessionId = ref<string | null>(null)
 const attemptCounts = ref<Record<string, number>>({})
+// 列表接口不返回 available_until，这里逐个任务补齐，供左侧列表展示与排序
+const taskDeadlines = ref<Record<string, string | null>>({})
 
 const currentClassId = computed(() => auth.session.value?.class_context?.class_id ?? null)
 const items = computed(() => listReq.data.value?.data ?? [])
@@ -38,85 +34,79 @@ const displayItems = computed(() => {
   return items.value.map((item) => {
     const itemTaskId = String(item.task_id)
     const attemptCount = attemptCounts.value[itemTaskId] ?? item.attempt_count ?? 0
-    if (!detail || itemTaskId !== String(detail.task_id)) {
-      return { ...item, attempt_count: attemptCount }
-    }
-    return {
+    const base = {
       ...item,
+      attempt_count: attemptCount,
+      available_until: taskDeadlines.value[itemTaskId] ?? item.available_until ?? null,
+    }
+    if (!detail || itemTaskId !== String(detail.task_id)) return base
+    return {
+      ...base,
       is_active: detail.is_active,
       available_from: detail.available_from,
-      available_until: detail.available_until,
-      attempt_count: records.value.length || attemptCount,
+      available_until: detail.available_until ?? base.available_until,
     }
   })
 })
-const records = computed(() => recordsReq.data.value?.tasks ?? [])
-const details = computed(() => detailsReq.data.value?.details ?? [])
+const selectedAttemptCount = computed(() => {
+  if (!selectedTaskId.value) return 0
+  return attemptCounts.value[selectedTaskId.value] ?? 0
+})
 
 const loadList = async () => {
   if (!currentClassId.value) {
     listReq.data.value = { ok: true, data: [] }
     selectedTaskId.value = null
     attemptCounts.value = {}
+    taskDeadlines.value = {}
     return
   }
   await listReq.run(async () => {
     const res = await getStudentTasks(currentClassId.value)
     return res
   })
-  await loadAttemptCounts()
-  selectedTaskId.value = items.value[0]?.task_id ?? null
+  await loadTaskMeta()
+  // 默认选中左侧列表排序后的第一条（未完成且截止最近），避免选中项被挤到可视区之外
+  const first =
+    items.value.find((item) => (attemptCounts.value[item.task_id] ?? 0) < 1) ?? items.value[0]
+  selectedTaskId.value = first?.task_id ?? null
 }
 
-const loadAttemptCounts = async () => {
+/** 并发补齐每个任务的尝试次数与截止时间（列表接口不提供，用于排序与展示） */
+const loadTaskMeta = async () => {
   const taskItems = items.value
   if (!taskItems.length) {
     attemptCounts.value = {}
+    taskDeadlines.value = {}
     return
   }
   const entries = await Promise.all(taskItems.map(async (item) => {
-    try {
-      const res = await getStudentTaskRecords(item.task_id)
-      return [String(item.task_id), res.tasks.length] as const
-    } catch {
-      return [String(item.task_id), item.attempt_count ?? 0] as const
+    const taskId = String(item.task_id)
+    const countPromise = getStudentTaskRecords(item.task_id)
+      .then((res) => res.tasks.length)
+      .catch(() => item.attempt_count ?? 0)
+    let availableUntil = item.available_until ?? null
+    if (!availableUntil) {
+      const detail = await getStudentTaskDetail(item.task_id).catch(() => null)
+      availableUntil = detail?.data.available_until ?? null
     }
+    return { taskId, attemptCount: await countPromise, availableUntil } as const
   }))
-  attemptCounts.value = Object.fromEntries(entries)
+  attemptCounts.value = Object.fromEntries(entries.map((entry) => [entry.taskId, entry.attemptCount]))
+  taskDeadlines.value = Object.fromEntries(entries.map((entry) => [entry.taskId, entry.availableUntil]))
 }
 
-const loadRecords = async () => {
+const loadDetail = async () => {
   if (!selectedTaskId.value) return
   await taskDetailReq.run(() => getStudentTaskDetail(selectedTaskId.value!))
-  await recordsReq.run(async () => {
-    const res = await getStudentTaskRecords(selectedTaskId.value!)
-    attemptCounts.value = {
-      ...attemptCounts.value,
-      [String(selectedTaskId.value)]: res.tasks.length,
-    }
-    return res
-  })
-  selectedSessionId.value = records.value[0]?.session_id ?? null
-  detailsReq.data.value = null
-  if (selectedSessionId.value) await loadSessionDetails(selectedSessionId.value)
 }
 
 const select = async (taskId: string) => {
   selectedTaskId.value = taskId
   try {
-    await loadRecords()
+    await loadDetail()
   } catch {
-    toast.push('获取记录失败，可点击重试', 'error')
-  }
-}
-
-const loadSessionDetails = async (sessionId = selectedSessionId.value) => {
-  if (!sessionId) return
-  selectedSessionId.value = sessionId
-  try {
-    await detailsReq.run(() => getStudentSessionDetails(sessionId))
-  } catch {
-    toast.push('获取句子明细失败，可点击重试', 'error')
+    toast.push('获取任务详情失败，可点击重试', 'error')
   }
 }
 
@@ -125,14 +115,12 @@ const startTest = async (taskId: string) => {
 }
 
 watch(currentClassId, async () => {
-  selectedSessionId.value = null
   taskDetailReq.data.value = null
-  recordsReq.data.value = null
-  detailsReq.data.value = null
   attemptCounts.value = {}
+  taskDeadlines.value = {}
   try {
     await loadList()
-    await loadRecords()
+    await loadDetail()
   } catch {
     toast.push('获取任务列表失败，可点击重试', 'error')
   }
@@ -158,24 +146,18 @@ watch(currentClassId, async () => {
     </div>
     <div class="flex-1">
       <ErrorState
-        v-if="recordsReq.error.value"
-        message="无法获取练习记录，请稍后重试。"
-        :busy="recordsReq.loading.value"
-        @retry="loadRecords"
+        v-if="taskDetailReq.error.value"
+        message="无法获取任务详情，请稍后重试。"
+        :busy="taskDetailReq.loading.value"
+        @retry="loadDetail"
       />
       <TaskMain
         v-else
-        :loading="recordsReq.loading.value"
         :task-detail="selectedTaskDetail"
         :selected-task-id="selectedTaskId"
         :task-detail-loading="taskDetailReq.loading.value"
         :task-detail-error="taskDetailReq.error.value"
-        :records="records"
-        :selected-session-id="selectedSessionId"
-        :details="details"
-        :details-loading="detailsReq.loading.value"
-        :details-error="detailsReq.error.value"
-        @select-record="loadSessionDetails"
+        :attempt-count="selectedAttemptCount"
         @start-test="startTest"
       />
     </div>

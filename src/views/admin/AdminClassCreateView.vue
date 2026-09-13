@@ -26,7 +26,7 @@ const inputClass =
   'w-full px-4 py-3 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFB] text-sm font-bold text-[#3C3C3C] placeholder:text-[#9CA3AF] focus:outline-none focus:ring-2 focus:ring-[#70C125]/30 focus:border-[#70C125] transition'
 
 const fillSample = () => {
-  rawStudents.value = ['S1001,王小明', 'S1002,李华', 'S1003,张伟'].join('\n')
+  rawStudents.value = ['10001,王小明', '10002,李华', '10003,张伟'].join('\n')
 }
 
 const parseStudents = () =>
@@ -50,6 +50,13 @@ const submit = async () => {
     return
   }
 
+  const students = parseStudents()
+  const invalidStudent = students.find((item) => !/^\d+$/.test(item.stu_id))
+  if (invalidStudent) {
+    toast.push(`学号必须为纯数字：${invalidStudent.stu_id}`, 'warning')
+    return
+  }
+
   submitting.value = true
   try {
     await saveAdminClass({
@@ -58,7 +65,7 @@ const submit = async () => {
       teacher_id: form.teacher_id || null,
       start_date: form.start_date || null,
       capacity: form.capacity ? Number(form.capacity) : null,
-      students: parseStudents(),
+      students,
     })
     toast.push('班级创建成功', 'success')
     router.push('/admin/classes')
@@ -150,7 +157,7 @@ onMounted(async () => {
                 class="w-full px-4 py-3 rounded-2xl border border-[#E2E8F0] bg-white text-sm font-bold text-[#3C3C3C] placeholder:text-[#9CA3AF] focus:outline-none focus:ring-2 focus:ring-[#70C125]/30 focus:border-[#70C125] transition resize-y"
               />
               <div class="mt-3 px-4 py-2 rounded-xl bg-[#F1F5F9] text-xs font-bold text-[#6B7280]">
-                示例：S1001,王小明
+                示例：10001,王小明（学号仅限数字）
               </div>
             </div>
           </div>

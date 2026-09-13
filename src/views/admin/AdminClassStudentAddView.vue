@@ -43,6 +43,10 @@ const submit = async () => {
     toast.push('请输入学号', 'warning')
     return
   }
+  if (!/^\d+$/.test(form.stu_id.trim())) {
+    toast.push('学号必须为纯数字', 'warning')
+    return
+  }
   if (!form.password) {
     toast.push('请输入初始密码', 'warning')
     return
@@ -118,7 +122,7 @@ onMounted(() => {
             </div>
             <div>
               <label class="block mb-2 text-sm font-black text-gray-900">学号</label>
-              <input v-model="form.stu_id" type="text" placeholder="如 S1007" :class="inputClass" />
+              <input v-model="form.stu_id" type="text" placeholder="如 10007（仅限数字）" :class="inputClass" />
             </div>
           </div>
 

@@ -204,6 +204,11 @@ const router = createRouter({
     },
     // 旧路由保留（重定向到新路由）
     {
+      path: '/history',
+      name: 'student-history',
+      component: () => import('../views/student/HistoryView.vue'),
+    },
+    {
       path: '/profile',
       redirect: '/student/profile',
     },

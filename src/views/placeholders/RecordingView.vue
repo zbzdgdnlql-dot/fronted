@@ -207,17 +207,38 @@ const currentResultScore = computed(() => {
   }
   return null
 })
+/**
+ * 只把真正的数字当成分数。
+ * 后端评测失败（如 Azure/phonemizer 异常）时 total_score 会是 null，
+ * 不能用 Number(null) === 0 把它当成 0 分，否则失败会被显示成 0 分。
+ */
+const scoreOrNull = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 const radarItems = computed(() => {
   const score = currentResultScore.value
   if (!score) return []
   // 单词模式仅评测音准，不展示流利度/完整度
-  if (taskMode.value === 'word') return [{ label: '音准', value: toNumber(score.accuracy) }]
+  if (taskMode.value === 'word') {
+    const accuracy = scoreOrNull(score.accuracy)
+    return accuracy === null ? [] : [{ label: '音准', value: accuracy }]
+  }
+  const accuracy = scoreOrNull(score.accuracy)
+  const fluency = scoreOrNull(score.fluency)
+  const completeness = scoreOrNull(score.completeness)
+  // 评测失败时三维分均为 null，不渲染成 0 分雷达图
+  if (accuracy === null || fluency === null || completeness === null) return []
   return [
-    { label: '准确度', value: toNumber(score.accuracy) },
-    { label: '流利度', value: toNumber(score.fluency) },
-    { label: '完整度', value: toNumber(score.completeness) },
+    { label: '准确度', value: accuracy },
+    { label: '流利度', value: fluency },
+    { label: '完整度', value: completeness },
   ]
 })
+/** 单词模式下方大号音准分；评测失败时为 null */
+const accuracyScore = computed(() => scoreOrNull(currentResultScore.value?.accuracy))
 const currentWords = computed(() => currentResultScore.value?.words ?? [])
 /** 词对模式下用于左右对照的两个单词 */
 const pairWords = computed(() => (taskMode.value === 'pair' ? currentWords.value.slice(0, 2) : []))
@@ -258,13 +279,13 @@ const syncResults = () => {
   if (sentencePage.value > pageCount.value) sentencePage.value = pageCount.value
 }
 
+/** 从评测结果中取总分；评测失败（分数为 null）时返回 null 而不是 0 分 */
 const scoreFromResult = (resultScore: unknown) => {
   if (!resultScore || typeof resultScore !== 'object') return null
   const scores = resultScore as Record<string, unknown>
   for (const key of ['overall', 'total_score', 'score']) {
-    const raw = scores[key]
-    const score = typeof raw === 'number' ? raw : Number(raw)
-    if (Number.isFinite(score)) return score
+    const score = scoreOrNull(scores[key])
+    if (score !== null) return score
   }
   return null
 }
@@ -275,10 +296,10 @@ const toNumber = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-/** 展示用主分：单词模式只看音准，其余模式用总分 */
+/** 展示用主分：单词模式只看音准，其余模式用总分；评测失败时返回 null */
 const pickScore = (score: StudentPronTestAnalyzeResultScore | null | undefined) => {
   if (!score) return null
-  return taskMode.value === 'word' ? toNumber(score.accuracy) : scoreFromResult(score)
+  return taskMode.value === 'word' ? scoreOrNull(score.accuracy) : scoreFromResult(score)
 }
 const primaryScore = computed(() => pickScore(currentResultScore.value))
 
@@ -483,9 +504,24 @@ const analyzeCurrentSentence = async (audio: Blob) => {
       core: taskMode.value === 'word' ? 'word' : 'sent',
     })
 
+    const score = scoreFromResult(res.result_score)
+    if (score === null) {
+      // 后端评测失败（如 Azure/phonemizer 异常）会返回空分数，
+      // 此时不能记为已完成，否则界面会显示成 0 分。
+      setCurrentResult({
+        status: 'error',
+        score: null,
+        evaluationId: res.evaluation_id,
+        error: '评测未返回有效分数，请重新录音',
+        resultScore: res.result_score ?? null,
+      })
+      toast.push('评测未返回有效分数，请重新录音', 'error')
+      return
+    }
+
     setCurrentResult({
       status: 'done',
-      score: scoreFromResult(res.result_score),
+      score,
       evaluationId: res.evaluation_id,
       error: null,
       resultScore: res.result_score ?? null,
@@ -858,8 +894,8 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
               <div class="text-xs font-black text-gray-400 mb-2">{{ showRadar ? `${radarItems.length} 维雷达图` : '音准得分' }}</div>
               <ScoreRadarChart v-if="showRadar" :items="radarItems" :height="'240px'" />
               <div v-else class="h-[240px] flex flex-col items-center justify-center gap-2">
-                <span class="text-4xl font-black" :class="scoreColor(toNumber(currentResultScore.accuracy))">
-                  {{ toNumber(currentResultScore.accuracy).toFixed(1) }}
+                <span class="text-4xl font-black" :class="accuracyScore === null ? 'text-gray-400' : scoreColor(accuracyScore)">
+                  {{ accuracyScore === null ? '--' : accuracyScore.toFixed(1) }}
                 </span>
                 <span class="text-xs font-black text-gray-400">音准（准确度）</span>
               </div>
@@ -867,7 +903,10 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
 
             <div class="flex flex-col gap-2 min-w-0">
               <div class="text-xs font-black text-gray-400">单词/音素评分（{{ currentWords.length }} 个）</div>
-              <div v-if="!currentWords.length" class="flex-1 rounded-2xl bg-white border border-gray-100 p-5 text-sm font-bold text-gray-400 flex items-center justify-center">
+              <div v-if="primaryScore === null" class="flex-1 rounded-2xl bg-orange-50 border border-orange-100 p-5 text-sm font-bold text-orange-600 flex items-center justify-center">
+                评测未返回有效分数，请重新录音后再试
+              </div>
+              <div v-else-if="!currentWords.length" class="flex-1 rounded-2xl bg-white border border-gray-100 p-5 text-sm font-bold text-gray-400 flex items-center justify-center">
                 暂无单词级明细
               </div>
               <div v-else class="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">

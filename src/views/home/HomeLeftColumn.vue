@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useHomeEvaluation } from './useHomeEvaluation'
 import { useToast } from '../../composables/useToast'
 
@@ -15,10 +15,14 @@ const {
   canStopRecording,
   currentSentence,
   progressPercent,
+  playingIndex,
+  ttsPreparing,
   splitSentences,
   selectSentence,
+  toggleSentenceAudio,
   startRecording,
   stopRecording,
+  resetAll,
   cleanup,
 } = useHomeEvaluation()
 
@@ -78,7 +82,99 @@ const recordingLabel = () => {
   return '开始录音'
 }
 
+// ---- 长句显示：分句列表默认单行省略、点击「展开」换行显示 ----
+const expandedSentences = ref<Set<number>>(new Set())
+const overflowSentences = ref<Set<number>>(new Set())
+const sentenceEls = new Map<number, HTMLElement>()
+
+const registerSentenceEl = (el: unknown, index: number) => {
+  if (el instanceof HTMLElement) sentenceEls.set(index, el)
+  else sentenceEls.delete(index)
+}
+
+const measureSentenceOverflow = () => {
+  const next = new Set<number>()
+  sentenceEls.forEach((el, index) => {
+    // 已展开的句子保留展开键，便于收起
+    if (expandedSentences.value.has(index) || el.scrollHeight - el.clientHeight > 1) next.add(index)
+  })
+  overflowSentences.value = next
+}
+
+const toggleSentenceExpand = (index: number) => {
+  const next = new Set(expandedSentences.value)
+  if (next.has(index)) next.delete(index)
+  else next.add(index)
+  expandedSentences.value = next
+  void nextTick(refreshSentenceLayout)
+}
+
+// ---- 分句列表：显示条数随终端可用高度自适应（按整句显示），超出部分滚动查看 ----
+const SENTENCE_LIST_GAP = 8
+const sentenceListEl = ref<HTMLElement | null>(null)
+const sentenceActionEl = ref<HTMLElement | null>(null)
+const sentenceListMaxHeight = ref<number | null>(null)
+
+/**
+ * 列表可用高度：xl 及以上为单屏布局，取「列表顶部 → 下方操作按钮区顶部」的间距。
+ * 两者都与列表自身高度无关，避免 flex 拉伸后量到被撑开的尺寸。
+ * 其余断点整页正常滚动，不做限制（返回 null）。
+ */
+const getSentenceListAvailableHeight = () => {
+  const list = sentenceListEl.value
+  const action = sentenceActionEl.value
+  if (!list || !action || !window.matchMedia('(min-width: 1280px)').matches) return null
+  return action.getBoundingClientRect().top - list.getBoundingClientRect().top
+}
+
+const measureSentenceListHeight = () => {
+  const list = sentenceListEl.value
+  const items = list ? (Array.from(list.children) as HTMLElement[]) : []
+  if (!list || !items.length) {
+    sentenceListMaxHeight.value = null
+    return
+  }
+  const available = getSentenceListAvailableHeight()
+  if (available === null || available <= 0) {
+    sentenceListMaxHeight.value = null
+    return
+  }
+  let total = 0
+  let shown = 0
+  for (let i = 0; i < items.length; i += 1) {
+    const next = total + (i > 0 ? SENTENCE_LIST_GAP : 0) + items[i].offsetHeight
+    if (next > available) break
+    total = next
+    shown = i + 1
+  }
+  // 全部放得下则不限高；连一句都放不下时交给容器自身滚动
+  sentenceListMaxHeight.value = shown === 0 || shown >= items.length ? null : total
+}
+
+const refreshSentenceLayout = () => {
+  measureSentenceOverflow()
+  // 「展开」键渲染完成后卡片高度才会定型，需等下一次 DOM 更新再测量
+  void nextTick(measureSentenceListHeight)
+}
+
+watch(
+  sentences,
+  () => {
+    expandedSentences.value = new Set()
+    sentenceListMaxHeight.value = null
+    void nextTick(refreshSentenceLayout)
+  },
+  { flush: 'post' },
+)
+
+const onResize = () => refreshSentenceLayout()
+
+onMounted(() => {
+  window.addEventListener('resize', onResize)
+})
+
 onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
   cleanup()
 })
 </script>
@@ -91,26 +187,39 @@ onUnmounted(() => {
       <div class="flex items-center justify-between mb-4 shrink-0">
         <h2 class="text-xl font-black text-gray-900">评测文本</h2>
         <div class="flex items-center gap-2">
+          <template v-if="!sentences.length">
+            <button
+              type="button"
+              class="text-sm font-bold text-[#70C125] hover:text-[#63ad20] transition-colors"
+              @click="importText"
+            >
+              导入文本
+            </button>
+            <button
+              type="button"
+              class="text-sm font-bold text-blue-500 hover:text-blue-600 transition-colors"
+              @click="clearText"
+            >
+              清空内容
+            </button>
+          </template>
           <button
-            type="button"
-            class="text-sm font-bold text-[#70C125] hover:text-[#63ad20] transition-colors"
-            @click="importText"
-          >
-            导入文本
-          </button>
-          <button
+            v-else
             type="button"
             class="text-sm font-bold text-blue-500 hover:text-blue-600 transition-colors"
-            @click="clearText"
+            @click="resetAll"
           >
-            清空内容
+            重新输入
           </button>
         </div>
       </div>
       <input ref="fileInput" type="file" accept=".txt,text/plain" class="hidden" @change="onFileSelected" />
 
-      <!-- Textarea -->
-      <div class="bg-[#F8F9FA] rounded-2xl border-2 border-transparent focus-within:border-blue-100 p-4 h-[140px] shrink-0 mb-4">
+      <!-- Textarea（智能分句后隐藏，只保留分句列表） -->
+      <div
+        v-if="!sentences.length"
+        class="bg-[#F8F9FA] rounded-2xl border-2 border-transparent focus-within:border-blue-100 p-4 h-[140px] shrink-0 mb-4"
+      >
         <textarea 
           v-model="textContent"
           class="w-full h-full bg-transparent resize-none outline-none text-[#1B254B] font-medium leading-relaxed placeholder-gray-400"
@@ -122,51 +231,87 @@ onUnmounted(() => {
       <div v-if="sentences.length" class="mb-4 flex flex-col gap-2 flex-1 min-h-0">
         <div class="flex items-center justify-between shrink-0">
           <span class="text-sm font-black text-gray-900">分句列表（{{ sentences.length }} 句）</span>
-          <span class="text-xs font-bold text-[#70C125]">已完成 {{ results.filter((r) => r.status === 'done').length }} / {{ sentences.length }}</span>
+          <span v-if="ttsPreparing" class="text-xs font-bold text-[#FFC107]">参考音频生成中…</span>
         </div>
-        <div class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto pr-1">
-          <button
+        <div
+          ref="sentenceListEl"
+          class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto pr-1"
+          :style="sentenceListMaxHeight ? { maxHeight: `${sentenceListMaxHeight}px` } : undefined"
+        >
+          <div
             v-for="(sentence, index) in sentences"
             :key="index"
-            type="button"
-            class="w-full text-left px-4 py-3 rounded-2xl border-2 transition-all flex items-center gap-3 shrink-0"
+            class="w-full text-left px-4 py-3 rounded-2xl border-2 transition-all flex items-center gap-3 shrink-0 cursor-pointer"
             :class="index === activeIndex ? 'border-[#70C125] bg-[#F0F7E2]' : 'border-gray-100 bg-[#F8F9FA] hover:border-gray-200'"
             @click="selectSentence(index)"
           >
             <span class="shrink-0 w-6 h-6 rounded-lg bg-white border border-gray-200 text-gray-500 text-xs font-black flex items-center justify-center">{{ index + 1 }}</span>
-            <span class="flex-1 text-sm font-medium text-[#1B254B] line-clamp-1">{{ sentence }}</span>
+            <div class="flex-1 min-w-0 flex flex-col items-start gap-1">
+              <span
+                :ref="(el) => registerSentenceEl(el, index)"
+                class="w-full text-sm font-medium text-[#1B254B] whitespace-normal break-words"
+                :class="expandedSentences.has(index) ? '' : 'line-clamp-1'"
+              >{{ sentence }}</span>
+              <button
+                v-if="overflowSentences.has(index)"
+                type="button"
+                class="rounded-full bg-[#F0F7E2] px-2 py-0.5 text-[11px] font-black text-[#70C125] hover:bg-[#E4F0D0] transition-colors"
+                @click.stop="toggleSentenceExpand(index)"
+              >
+                {{ expandedSentences.has(index) ? '收起' : '展开' }}
+              </button>
+            </div>
             <span v-if="results[index]?.score !== null && results[index]?.score !== undefined" class="shrink-0 text-xs font-black text-[#70C125]">{{ Math.round(results[index]!.score!) }}</span>
             <span class="shrink-0 text-[10px] font-bold px-2 py-1 rounded-full" :class="statusClass(results[index]?.status ?? 'pending')">{{ statusText(results[index]?.status ?? 'pending') }}</span>
-          </button>
+            <button
+              type="button"
+              class="shrink-0 bg-[#FFC107] text-white rounded-xl px-3 py-1.5 text-xs font-black flex items-center gap-1 hover:bg-[#e6ad06] border-b-2 border-[#D9A406] active:border-b-0 active:translate-y-0.5 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+              :disabled="recording || analyzing"
+              @click.stop="toggleSentenceAudio(index)"
+            >
+              <img src="../../assets/figma/icon-play.svg" class="w-3.5 h-3.5 invert brightness-0" alt="" />
+              {{ playingIndex === index ? '停止' : '朗读' }}
+            </button>
+          </div>
         </div>
       </div>
 
-      <!-- Action Buttons -->
-      <div class="flex flex-wrap items-center justify-between gap-4 mt-auto shrink-0">
+      <!-- Action Buttons（自适应测高的下边界锚点） -->
+      <div ref="sentenceActionEl" class="flex flex-wrap items-center justify-between gap-4 mt-auto shrink-0">
         <div class="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            class="bg-[#70C125] text-white px-5 py-3 rounded-2xl font-black text-sm flex items-center gap-2 hover:bg-[#63ad20] border-b-4 border-[#5E9E1A] active:border-b-0 active:translate-y-1 transition-all shrink-0"
+            class="bg-[#70C125] text-white px-5 py-3 rounded-2xl font-black text-sm flex items-center gap-2 hover:bg-[#63ad20] border-b-4 border-[#5E9E1A] active:border-b-0 active:translate-y-1 transition-all shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
+            :disabled="ttsPreparing"
             @click="splitSentences"
           >
             <img src="../../assets/figma/icon-split.svg" class="w-5 h-5 invert brightness-0" alt="" />
-            智能分句
+            {{ ttsPreparing ? '分句中…' : '智能分句' }}
           </button>
         </div>
       </div>
     </div>
 
     <!-- Bottom Box: Recording Area（紧凑操作条，固定高度不再撑满） -->
-    <div class="relative bg-white rounded-[32px] border-2 border-gray-100 shadow-sm overflow-hidden flex flex-col items-center justify-center shrink-0 gap-3 py-4 px-6">
+    <div
+      class="relative bg-white rounded-[32px] border-2 border-gray-100 shadow-sm overflow-hidden flex flex-col items-center justify-center shrink-0 gap-3 py-4 px-6"
+    >
       <!-- Progress: 顶部细线 -->
       <div v-if="sentences.length" class="absolute top-0 left-0 w-full h-1 bg-gray-100">
         <div class="h-1 bg-[#70C125] transition-[width] duration-300" :style="{ width: `${progressPercent}%` }"></div>
       </div>
 
-      <!-- 当前评测句 -->
-      <div v-if="currentSentence" class="w-full flex items-center justify-center gap-2 min-w-0">
-        <span class="text-xs font-black text-gray-400 uppercase tracking-wider shrink-0">当前评测句</span>
-        <p class="text-sm font-bold text-[#1B254B] truncate">{{ currentSentence }}</p>
+      <!-- 当前评测句（右上角显示完成进度） -->
+      <div v-if="sentences.length" class="w-full flex items-center gap-3 min-w-0 shrink-0">
+        <div class="flex flex-1 min-w-0 items-center justify-center gap-2">
+          <span class="text-xs font-black text-gray-400 uppercase tracking-wider shrink-0">当前评测句</span>
+          <p class="min-w-0 text-sm font-bold text-[#1B254B] whitespace-normal break-words">{{ currentSentence }}</p>
+        </div>
+        <span
+          class="shrink-0 whitespace-nowrap rounded-full border border-[#70C125]/30 bg-[#F0F7E2] px-2.5 py-1 text-[11px] font-black text-[#70C125]"
+        >
+          已完成 {{ results.filter((r) => r.status === 'done').length }} / {{ sentences.length }}
+        </span>
       </div>
 
       <!-- Waveform + Device Ready Pill -->

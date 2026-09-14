@@ -130,7 +130,7 @@ onBeforeUnmount(() => {
         退出
       </button>
 
-      <UserAccountMenu />
+      <UserAccountMenu hide-avatar />
     </div>
   </header>
 </template>

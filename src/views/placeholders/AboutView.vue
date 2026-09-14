@@ -1,45 +1,107 @@
 <script setup lang="ts">
-import { BookOpen, CheckCircle2, FileClock, GraduationCap, Languages, Mic, ShieldCheck, Sparkles } from 'lucide-vue-next'
-import heroImage from '../../assets/figma/hero-image.png'
+import {
+  AlertCircle,
+  BookOpen,
+  CheckCircle2,
+  GraduationCap,
+  Layers3,
+  Library,
+  Mic,
+  ShieldCheck,
+  Sparkles,
+  Users,
+} from 'lucide-vue-next'
 
 const languages = ['法语', '德语', '日语', '俄语', '西班牙语']
 
-const statCards = [
-  { label: '训练方式', value: '逐句朗读' },
-  { label: '反馈维度', value: '发音 / 节奏 / 流畅' },
-  { label: '学习沉淀', value: '任务记录与档案' },
-  { label: '班级场景', value: '教师布置 · 学生练习' },
+// 首屏右侧速览：数字均来自平台真实能力定义
+const heroStats = [
+  { value: '5', label: '支持语种', desc: '日语 · 德语 · 法语 · 西班牙语 · 俄语' },
+  { value: '4', label: '评分维度', desc: '发音 · 节奏 · 流利 · 完整' },
+  { value: '3', label: '反馈粒度', desc: '句子 · 单词 · 音素' },
+  { value: '70', label: '薄弱预警线', desc: '音素得分低于 70 分重点练习' },
+]
+
+const featureTones = [
+  'bg-[#EAF0DD] text-[#70C125]',
+  'bg-blue-50 text-blue-600',
+  'bg-pink-50 text-pink-500',
 ]
 
 const features = [
   {
-    title: '句子级发音评测',
-    desc: '围绕教师布置的朗读任务，逐句完成录音、评测和记录保存。',
+    title: '自由评测',
+    desc: '输入任意文本，系统智能分句后逐句录音，即时返回该句得分与单词明细。',
     icon: Mic,
   },
   {
-    title: '班级任务管理',
-    desc: '学生可以在不同班级之间切换，只查看当前班级下的任务和历史记录。',
+    title: '任务练习',
+    desc: '教师按班级布置作业或练习任务；学生在开放时间与最大提交次数内完成。',
     icon: BookOpen,
   },
   {
-    title: '学习档案沉淀',
-    desc: '评测次数、平均分、最高分和历史单词会汇总到个人档案中，便于复盘。',
-    icon: FileClock,
+    title: '班级上下文',
+    desc: '学生可在所属班级之间切换，每个班级的任务、次数与历史记录互相独立。',
+    icon: Layers3,
+  },
+  {
+    title: '薄弱环节分析',
+    desc: '提供逐句评分与音素薄弱环节，低于 70 分的音素会被单独标出并给出练习建议。',
+    icon: AlertCircle,
+  },
+  {
+    title: '教师逐句批改',
+    desc: '教师可播放学生录音、对照机器评分逐句写评语，并提交总体评价供学生回看。',
+    icon: CheckCircle2,
+  },
+  {
+    title: '校本练习库',
+    desc: '练习可保存为校本练习，按「同校公开 / 仅自己可见」控制范围，便于同校复用。',
+    icon: Library,
   },
 ]
 
 const steps = [
-  '登录并选择当前班级',
-  '进入任务详情并开始测试',
-  '逐句录音并查看评测结果',
-  '提交测试后回到任务记录复盘',
+  {
+    title: '布置任务',
+    desc: '教师选择班级、填写朗读内容，设定开始与截止时间、最大提交次数后发布。',
+  },
+  {
+    title: '逐句练习',
+    desc: '学生在任务窗口内逐句录音，可重录、重试；录音需在 Chrome 或 Edge 中授权麦克风权限。',
+  },
+  {
+    title: '即时评测',
+    desc: '句子级返回发音、节奏、流利、完整四维得分，并可下钻查看单词级与音素级明细。',
+  },
+  {
+    title: '反馈沉淀',
+    desc: '提交结果写入学习档案与历史记录；教师批改后，学生可回看逐句评语与总体评价。',
+  },
 ]
 
-const notes = [
-  '当前学生端优先服务本机联调，接口默认连接本地后端环回地址。',
-  '录音评测依赖浏览器麦克风权限，请在 Chrome 或 Edge 中授权使用。',
-  '平台展示的评分和句子明细来自后端评测接口与数据库记录。',
+const roles = [
+  {
+    name: '学生端',
+    icon: GraduationCap,
+    points: ['自由评测与智能分句', '班级任务练习与记录', '薄弱环节与音素分析', '学习档案与个人中心'],
+  },
+  {
+    name: '教师端',
+    icon: Users,
+    points: ['概览与内容管理', '布置作业与练习任务', '作业批改与班级分析', '班级管理与校本练习库'],
+  },
+  {
+    name: '管理端',
+    icon: ShieldCheck,
+    points: ['平台总览与近期动态', '班级管理', '教师与班级分配', '学生管理'],
+  },
+]
+
+const credits = [
+  { title: '指导教师', names: ['王静', '毕笑', '乔颖', '贺致远', '班捷', '袁陈杰'] },
+  { title: '平台开发', names: ['都兴烁', '谭智元', '魏泽祺'] },
+  { title: '美术设计', names: ['邵珺婷'] },
 ]
 </script>
 
@@ -73,120 +135,142 @@ const notes = [
           </div>
         </div>
 
-        <div class="lg:col-span-5 bg-[#F8F9FA] border-t lg:border-t-0 lg:border-l border-gray-100 p-7 md:p-10 flex flex-col justify-center gap-6">
-          <div class="rounded-[24px] bg-white border border-gray-100 shadow-sm p-6 flex flex-col items-center gap-5">
-            <img :src="heroImage" alt="Audio waveform" class="w-full max-w-[360px] h-24 object-contain" />
-            <div class="w-full grid grid-cols-3 gap-3">
-              <div class="rounded-2xl bg-[#EAF0DD] p-4 text-center">
-                <div class="text-2xl font-black text-[#70C125]">91</div>
-                <div class="text-xs font-black text-gray-500">最高分</div>
-              </div>
-              <div class="rounded-2xl bg-blue-50 p-4 text-center">
-                <div class="text-2xl font-black text-blue-600">4</div>
-                <div class="text-xs font-black text-gray-500">步骤</div>
-              </div>
-              <div class="rounded-2xl bg-pink-50 p-4 text-center">
-                <div class="text-2xl font-black text-pink-500">5</div>
-                <div class="text-xs font-black text-gray-500">语种</div>
-              </div>
+        <div class="lg:col-span-5 bg-[#F8F9FA] border-t lg:border-t-0 lg:border-l border-gray-100 p-7 md:p-10 flex flex-col justify-center gap-5">
+          <div class="flex flex-col gap-1">
+            <h3 class="text-lg font-black text-gray-900">平台速览</h3>
+            <p class="text-sm font-bold text-gray-500">关于评测能力与使用场景的一组数字。</p>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div
+              v-for="item in heroStats"
+              :key="item.label"
+              class="rounded-2xl bg-white border border-gray-100 p-4 flex flex-col gap-1"
+            >
+              <div class="text-2xl font-black text-[#70C125]">{{ item.value }}</div>
+              <div class="text-xs font-black text-gray-800">{{ item.label }}</div>
+              <div class="text-[11px] font-bold text-gray-400 leading-relaxed">{{ item.desc }}</div>
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-      <div
-        v-for="item in statCards"
-        :key="item.label"
-        class="bg-white border border-gray-100 rounded-[24px] p-5 shadow-sm"
-      >
-        <div class="text-xs font-black text-gray-400 mb-2">{{ item.label }}</div>
-        <div class="text-lg font-black text-gray-900">{{ item.value }}</div>
+    <section class="flex flex-col gap-5">
+      <div class="flex flex-col gap-1">
+        <h3 class="text-2xl font-black text-gray-900 tracking-tight">平台特点</h3>
+        <p class="text-sm font-bold text-gray-500">从自由练习到课堂任务，覆盖发音训练的主要环节。</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <article
+          v-for="(item, index) in features"
+          :key="item.title"
+          class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5"
+        >
+          <div
+            class="w-12 h-12 rounded-2xl border border-gray-100 flex items-center justify-center"
+            :class="featureTones[index % 3]"
+          >
+            <component :is="item.icon" class="w-5 h-5" />
+          </div>
+          <div class="flex flex-col gap-2">
+            <h4 class="text-lg font-black text-gray-900">{{ item.title }}</h4>
+            <p class="text-sm font-bold text-gray-500 leading-relaxed">{{ item.desc }}</p>
+          </div>
+        </article>
       </div>
     </section>
 
-    <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <article
-        v-for="(item, index) in features"
-        :key="item.title"
-        class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5"
-      >
+    <section class="bg-white border border-gray-100 rounded-[24px] p-6 md:p-8 shadow-sm flex flex-col gap-6">
+      <div class="flex items-center gap-3">
+        <GraduationCap class="w-5 h-5 text-[#70C125]" />
+        <div class="flex flex-col gap-1">
+          <h3 class="text-lg font-black text-gray-900">教学闭环</h3>
+          <p class="text-sm font-bold text-gray-500">教师布置 → 学生练习 → 即时评测 → 反馈沉淀。</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <div
-          class="w-12 h-12 rounded-2xl border border-gray-100 flex items-center justify-center"
-          :class="index === 0 ? 'bg-[#EAF0DD]' : index === 1 ? 'bg-blue-50' : 'bg-pink-50'"
+          v-for="(step, index) in steps"
+          :key="step.title"
+          class="rounded-2xl border border-gray-100 bg-[#F8F9FA] p-5 flex flex-col gap-3"
         >
-          <component
-            :is="item.icon"
-            class="w-5 h-5"
-            :class="index === 0 ? 'text-[#70C125]' : index === 1 ? 'text-blue-600' : 'text-pink-500'"
-          />
-        </div>
-        <div class="flex flex-col gap-2">
-          <h3 class="text-lg font-black text-gray-900">{{ item.title }}</h3>
-          <p class="text-sm font-bold text-gray-500 leading-relaxed">{{ item.desc }}</p>
-        </div>
-      </article>
-    </section>
-
-    <section class="grid grid-cols-1 xl:grid-cols-12 gap-8">
-      <div class="xl:col-span-7 bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
-        <div class="flex items-center gap-3">
-          <GraduationCap class="w-5 h-5 text-[#70C125]" />
-          <h3 class="text-lg font-black text-gray-900">学生使用流程</h3>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div
-            v-for="(step, index) in steps"
-            :key="step"
-            class="rounded-2xl border border-gray-100 bg-[#F8F9FA] p-4 flex items-center gap-4"
-          >
+          <div class="flex items-center gap-3">
             <span class="w-8 h-8 rounded-full bg-white border border-gray-100 flex items-center justify-center text-sm font-black text-[#70C125] shrink-0">
               {{ index + 1 }}
             </span>
-            <span class="text-sm font-black text-gray-800">{{ step }}</span>
+            <span class="text-base font-black text-gray-900">{{ step.title }}</span>
           </div>
-        </div>
-      </div>
-
-      <div class="xl:col-span-5 bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
-        <div class="flex items-center gap-3">
-          <ShieldCheck class="w-5 h-5 text-[#70C125]" />
-          <h3 class="text-lg font-black text-gray-900">说明</h3>
-        </div>
-
-        <div class="flex flex-col gap-3">
-          <div
-            v-for="note in notes"
-            :key="note"
-            class="flex items-start gap-3 text-sm font-bold text-gray-600 leading-relaxed"
-          >
-            <CheckCircle2 class="w-4 h-4 mt-0.5 text-[#70C125] shrink-0" />
-            <span>{{ note }}</span>
-          </div>
+          <p class="text-sm font-bold text-gray-500 leading-relaxed">{{ step.desc }}</p>
         </div>
       </div>
     </section>
 
-    <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-      <div class="flex items-center gap-4">
-        <div class="w-12 h-12 rounded-2xl bg-[#F8F9FA] border border-gray-100 flex items-center justify-center">
-          <Languages class="w-6 h-6 text-[#70C125]" />
-        </div>
-        <div>
-          <h3 class="text-lg font-black text-gray-900">为多语种课堂设计</h3>
-          <p class="text-sm font-bold text-gray-500">同一套学生端流程，可承载不同语种的发音训练任务。</p>
+    <section class="flex flex-col gap-5">
+      <div class="flex items-center gap-3">
+        <Users class="w-5 h-5 text-[#70C125]" />
+        <div class="flex flex-col gap-1">
+          <h3 class="text-lg font-black text-gray-900">三端角色分工</h3>
+          <p class="text-sm font-bold text-gray-500">同一套评测能力，按学生、教师与管理员划分使用范围。</p>
         </div>
       </div>
-      <div class="flex flex-wrap gap-2">
-        <span
-          v-for="language in languages"
-          :key="`bottom-${language}`"
-          class="rounded-full bg-[#F8F9FA] border border-gray-100 px-3 py-1.5 text-xs font-black text-gray-600"
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <article
+          v-for="role in roles"
+          :key="role.name"
+          class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5"
         >
-          {{ language }}
-        </span>
+          <div class="flex items-center gap-3">
+            <div class="w-11 h-11 rounded-2xl bg-[#EAF0DD] flex items-center justify-center">
+              <component :is="role.icon" class="w-5 h-5 text-[#70C125]" />
+            </div>
+            <h4 class="text-lg font-black text-gray-900">{{ role.name }}</h4>
+          </div>
+
+          <div class="flex flex-col gap-3">
+            <div
+              v-for="point in role.points"
+              :key="point"
+              class="flex items-start gap-3 text-sm font-bold text-gray-600 leading-relaxed"
+            >
+              <CheckCircle2 class="w-4 h-4 mt-0.5 text-[#70C125] shrink-0" />
+              <span>{{ point }}</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="bg-white border border-gray-100 rounded-[24px] p-6 md:p-8 shadow-sm flex flex-col gap-6">
+      <div class="flex items-center gap-3">
+        <Sparkles class="w-5 h-5 text-[#70C125]" />
+        <div class="flex flex-col gap-1">
+          <h3 class="text-lg font-black text-gray-900">特别鸣谢</h3>
+          <p class="text-sm font-bold text-gray-500">感谢以下老师与同学对本平台的支持与付出。</p>
+        </div>
+        <span class="ml-auto shrink-0 text-[11px] font-bold text-gray-400">按照姓氏笔画排序</span>
+      </div>
+
+      <div class="flex flex-col gap-5">
+        <div
+          v-for="group in credits"
+          :key="group.title"
+          class="flex flex-col items-center gap-3"
+        >
+          <h4 class="text-sm font-black text-[#70C125] tracking-wider">{{ group.title }}</h4>
+          <ul class="flex flex-wrap items-center justify-center gap-2">
+            <li
+              v-for="name in group.names"
+              :key="name"
+              class="rounded-full border border-gray-100 bg-[#F8F9FA] px-4 py-1.5 text-sm font-black text-gray-700"
+            >
+              {{ name }}
+            </li>
+          </ul>
+        </div>
       </div>
     </section>
   </main>

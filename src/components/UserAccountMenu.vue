@@ -9,6 +9,7 @@ import { useAuth } from '../stores/auth'
 
 defineProps<{
   compact?: boolean
+  hideAvatar?: boolean
 }>()
 
 const toast = useToast()
@@ -82,6 +83,7 @@ const submitPassword = async () => {
         {{ currentUser.displayName.value }}
       </span>
       <div
+        v-if="!hideAvatar"
         :class="[
           'w-9 h-9 rounded-full border-2 p-0.5 overflow-hidden flex items-center justify-center shrink-0',
           compact ? 'border-[#58CC02] bg-[#EAF0DD]' : 'border-[#70C125] bg-blue-50',
@@ -107,11 +109,21 @@ const submitPassword = async () => {
   </div>
 
   <button
+    v-if="!hideAvatar"
     type="button"
     class="sm:hidden w-10 h-10 rounded-full border-2 border-[#70C125] p-0.5 overflow-hidden flex items-center justify-center bg-blue-50"
     @click="openPasswordModal"
   >
     <img :src="currentUser.avatarSrc.value" alt="Avatar" class="w-full h-full object-cover rounded-full" />
+  </button>
+  <button
+    v-else
+    type="button"
+    class="sm:hidden inline-flex items-center gap-1.5 text-sm font-black text-gray-500 hover:text-gray-700"
+    @click="openPasswordModal"
+  >
+    <KeyRound class="h-4 w-4" />
+    修改密码
   </button>
 
   <Teleport to="body">

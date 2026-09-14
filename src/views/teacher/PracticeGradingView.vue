@@ -55,6 +55,11 @@ const formatAudioTime = (seconds: number) => {
   return `${minutes}:${rest}`
 }
 
+// 分数统一保留两位小数展示
+const formatScore = (value: number | null | undefined) => (
+  value == null || !Number.isFinite(Number(value)) ? '--' : Number(value).toFixed(2)
+)
+
 const audioProgress = computed(() => {
   if (!audioDuration.value) return 0
   return Math.min(Math.max((audioCurrentTime.value / audioDuration.value) * 100, 0), 100)
@@ -160,7 +165,7 @@ const mapDetails = (details: StudentSessionEvaluationItem[]) => {
       id: item.eval_id,
       audioFileId: item.audio_file_id ?? null,
       text: item.sentence_text,
-      score: Math.round(item.total_score),
+      score: Number(Number(item.total_score ?? 0).toFixed(2)),
       teacherComment: item.teacher_notes ?? '',
     })),
     overallComment: '',
@@ -242,7 +247,7 @@ onBeforeUnmount(cleanupAudio)
           >
             <span class="text-sm font-bold text-[#1F2937]">{{ sub.studentName }}</span>
             <span class="text-sm text-[#64748B]">{{ sub.contentTitle }}</span>
-            <span class="text-sm font-bold" :class="sub.score != null ? 'text-[#1F2937]' : 'text-[#9CA3AF]'">{{ sub.score ?? '—' }}</span>
+            <span class="text-sm font-bold" :class="sub.score != null ? 'text-[#1F2937]' : 'text-[#9CA3AF]'">{{ sub.score != null ? formatScore(sub.score) : '—' }}</span>
             <span>
               <span
                 :class="[
@@ -314,7 +319,7 @@ onBeforeUnmount(cleanupAudio)
             >
               <span class="text-xs font-bold text-[#64748B]">句子 {{ idx + 1 }}</span>
               <p class="text-sm font-bold text-[#1F2937] mt-1 line-clamp-2">{{ sentence.text }}</p>
-              <span class="mt-2 block text-xs font-black text-[#356B00]">{{ sentence.score }}分</span>
+              <span class="mt-2 block text-xs font-black text-[#356B00]">{{ formatScore(sentence.score) }}分</span>
             </div>
           </div>
         </div>
@@ -332,7 +337,7 @@ onBeforeUnmount(cleanupAudio)
                 :disabled="saveReq.loading.value"
                 @click="submitFeedback"
               >
-                {{ saveReq.loading.value ? '提交中...' : '提交评分' }}
+                {{ saveReq.loading.value ? '提交中...' : '提交评语' }}
               </button>
             </div>
           </div>
@@ -391,7 +396,7 @@ onBeforeUnmount(cleanupAudio)
               <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">机器评分</span>
               <div class="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4">
                 <div class="flex items-end gap-2">
-                  <span class="text-4xl font-black text-[#356B00]">{{ activeSentence.score }}</span>
+                  <span class="text-4xl font-black text-[#356B00]">{{ formatScore(activeSentence.score) }}</span>
                   <span class="pb-1 text-sm font-black text-[#64748B]">/ 100 分</span>
                 </div>
                 <div class="mt-3 h-2 rounded-full bg-[#E2E8F0] overflow-hidden">

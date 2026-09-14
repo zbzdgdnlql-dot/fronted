@@ -32,6 +32,7 @@ import {
   getStudentTaskAvailabilityFromApi,
   studentTaskAvailabilityLabels,
 } from '../../utils/studentTaskAvailability'
+import { matchSentenceWords } from '../../utils/sentenceWords'
 import { useToast } from '../../composables/useToast'
 
 type TabKey = 'multidim' | 'weak'
@@ -48,6 +49,8 @@ type TaskCardItem = {
   scoreClass: string
   date: string
   summary: string
+  /** 教师是否已下发评语：用于卡片上的「教师已批改」标记 */
+  teacherReviewed: boolean
 }
 
 /** 某个任务的第 N 次提交（一次提交 = 一个 session） */
@@ -57,6 +60,8 @@ type AttemptItem = {
   score: string
   scoreClass: string
   date: string
+  /** 该次提交的教师总体评语（session 级），空串表示未批改 */
+  teacherComment: string
 }
 
 /** 句子内单个单词（含音素明细），用于下划线标注与悬停浮层 */
@@ -71,6 +76,8 @@ type WordItem = {
   /** 该词在整句用户录音中的持续时长（毫秒） */
   durationMs: number
   phonemes: Array<{ phoneme: string; score: number }>
+  /** 紧贴该词尾的标点（后端词列表不含标点，按原句补回） */
+  suffix: string
 }
 
 /** 一次提交中的单句评测块 */
@@ -86,6 +93,10 @@ type SentenceBlock = {
   polygon: string
   points: Array<{ x: number; y: number }>
   words: WordItem[]
+  /** 句首词之前的标点（如起始引号），按原句补回 */
+  prefix: string
+  /** 该句的教师评语，空串表示该句无评语 */
+  teacherComment: string
 }
 
 const toNumber = (value: unknown) => {
@@ -139,6 +150,30 @@ const attempts = ref<AttemptItem[]>([])
 const attemptsLoading = ref(false)
 const selectedSessionId = ref('')
 
+// ---- 教师总体评语：未查看标红，查看后变灰（仍可重复点击） ----
+const openCommentSessionId = ref('')
+const viewedCommentSessions = ref<string[]>([])
+const openCommentAttempt = computed(
+  () => attempts.value.find((item) => item.sessionId === openCommentSessionId.value) ?? null,
+)
+const commentButtonClass = (sessionId: string) => {
+  if (openCommentSessionId.value === sessionId) return 'border-[#1CB0F6] bg-[#F0F9FF] text-[#0369A1]'
+  if (viewedCommentSessions.value.includes(sessionId)) {
+    return 'border-[#E2E8F0] bg-[#F8FAFB] text-[#9CA3AF] hover:text-[#6B7280]'
+  }
+  return 'border-[#FECACA] bg-[#FEF2F2] text-[#DC2626] hover:bg-[#FEE2E2]'
+}
+const toggleAttemptComment = (sessionId: string) => {
+  if (openCommentSessionId.value === sessionId) {
+    openCommentSessionId.value = ''
+    return
+  }
+  openCommentSessionId.value = sessionId
+  if (!viewedCommentSessions.value.includes(sessionId)) {
+    viewedCommentSessions.value = [...viewedCommentSessions.value, sessionId]
+  }
+}
+
 const sessionDetails = ref<StudentSessionEvaluationItem[]>([])
 const detailLoading = ref(false)
 const detailError = ref('')
@@ -187,6 +222,26 @@ const sentenceBlocks = computed<SentenceBlock[]>(() =>
   sessionDetails.value.map((item, index) => {
     const values = [item.fluency, item.completeness, item.pronunciation]
     const points = values.map((value, i) => radarPoint(i, toNumber(value)))
+    const rawWords: WordItem[] = (item.words ?? []).map((word) => ({
+      evalId: item.eval_id,
+      word: word.word,
+      score: clampScore(word.overall ?? word.pronunciation),
+      errorType: word.error_type && word.error_type !== 'None' ? word.error_type : '',
+      startMs: toNumber(word.start_ms),
+      durationMs: toNumber(word.duration_ms),
+      phonemes: (word.phonemes ?? []).map((phoneme) => ({
+        phoneme: phoneme.phoneme,
+        score: clampScore(phoneme.pronunciation),
+      })),
+      suffix: '',
+    }))
+    // 后端词列表不含标点，按原句把标点补回词尾，逐词渲染才与原句一致
+    const layout = matchSentenceWords(item.sentence_text, rawWords.map((word) => word.word))
+    const words = layout.words.map((matched) => ({
+      ...rawWords[matched.index],
+      word: matched.value,
+      suffix: matched.suffix,
+    }))
     return {
       key: item.eval_id || `${item.line_number}-${index}`,
       evalId: item.eval_id,
@@ -198,18 +253,9 @@ const sentenceBlocks = computed<SentenceBlock[]>(() =>
       pronunciation: clampScore(item.pronunciation),
       polygon: points.map((p) => `${p.x},${p.y}`).join(' '),
       points,
-      words: (item.words ?? []).map((word) => ({
-        evalId: item.eval_id,
-        word: word.word,
-        score: clampScore(word.overall ?? word.pronunciation),
-        errorType: word.error_type && word.error_type !== 'None' ? word.error_type : '',
-        startMs: toNumber(word.start_ms),
-        durationMs: toNumber(word.duration_ms),
-        phonemes: (word.phonemes ?? []).map((phoneme) => ({
-          phoneme: phoneme.phoneme,
-          score: clampScore(phoneme.pronunciation),
-        })),
-      })),
+      words,
+      prefix: layout.prefix,
+      teacherComment: String(item.teacher_notes ?? '').trim(),
     }
   }),
 )
@@ -260,6 +306,80 @@ const isAudioPlaying = (key: string, kind: AudioKind) =>
   !audioLoading.value && audioKey.value === key && audioKind.value === kind
 const isBlockPlaying = (key: string) => !audioLoading.value && audioKey.value === key
 
+// ---- 播放进度：独立容器常驻占位（仅切换透明度，句子不会因弹出而移位）+ 可拖动 + 无操作自动隐去 ----
+const PROGRESS_AUTO_HIDE_MS = 4000
+const audioDuration = ref(0)
+const audioCurrentTime = ref(0)
+const audioSeeking = ref(false)
+const progressVisible = ref(false)
+let progressHideTimer: number | null = null
+
+const clearProgressHideTimer = () => {
+  if (progressHideTimer !== null) {
+    window.clearTimeout(progressHideTimer)
+    progressHideTimer = null
+  }
+}
+const hideProgress = () => {
+  clearProgressHideTimer()
+  progressVisible.value = false
+}
+const scheduleProgressHide = () => {
+  clearProgressHideTimer()
+  progressHideTimer = window.setTimeout(() => {
+    progressVisible.value = false
+    progressHideTimer = null
+  }, PROGRESS_AUTO_HIDE_MS)
+}
+// 开始播放、或鼠标移到进度条上时调用：显示并重新开始计时
+const revealProgress = () => {
+  progressVisible.value = true
+  scheduleProgressHide()
+}
+
+const formatAudioTime = (seconds: number) => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
+  const minutes = Math.floor(seconds / 60)
+  const rest = Math.floor(seconds % 60).toString().padStart(2, '0')
+  return `${minutes}:${rest}`
+}
+
+// 按指针位置换算比例并写回音频当前时间
+const seekTo = (clientX: number, track: HTMLElement | null) => {
+  const audio = currentAudio
+  if (!audio || !track) return
+  const rect = track.getBoundingClientRect()
+  if (!rect.width) return
+  const duration = Number.isFinite(audio.duration) ? audio.duration : audioDuration.value
+  if (!Number.isFinite(duration) || duration <= 0) return
+  const ratio = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1)
+  audio.currentTime = ratio * duration
+  audioCurrentTime.value = audio.currentTime
+  audioDuration.value = duration
+  audioProgress.value = ratio * 100
+}
+
+const startSeek = (event: PointerEvent) => {
+  const track = event.currentTarget as HTMLElement | null
+  if (!track || !currentAudio) return
+  audioSeeking.value = true
+  revealProgress()
+  track.setPointerCapture?.(event.pointerId)
+  seekTo(event.clientX, track)
+}
+const moveSeek = (event: PointerEvent) => {
+  if (!audioSeeking.value) return
+  revealProgress()
+  seekTo(event.clientX, event.currentTarget as HTMLElement | null)
+}
+const endSeek = (event: PointerEvent) => {
+  if (!audioSeeking.value) return
+  const track = event.currentTarget as HTMLElement | null
+  if (track?.hasPointerCapture?.(event.pointerId)) track.releasePointerCapture(event.pointerId)
+  audioSeeking.value = false
+  scheduleProgressHide()
+}
+
 const stopAudio = () => {
   playbackToken += 1
   releaseWordAudio()
@@ -282,6 +402,10 @@ const stopAudio = () => {
   audioKey.value = ''
   audioLoading.value = false
   audioProgress.value = 0
+  audioCurrentTime.value = 0
+  audioDuration.value = 0
+  audioSeeking.value = false
+  hideProgress()
 }
 
 const playAudioBlob = (blob: Blob, token: number) =>
@@ -303,8 +427,16 @@ const playAudioBlob = (blob: Blob, token: number) =>
       resolve()
     }
     stopCurrentPlayback = finish
+    // 开始播放时显示进度条，随后若用户没有操作会自动隐去
+    revealProgress()
+    audio.onloadedmetadata = () => {
+      if (token !== playbackToken) return
+      if (Number.isFinite(audio.duration)) audioDuration.value = audio.duration
+    }
     audio.ontimeupdate = () => {
       if (token !== playbackToken) return
+      audioCurrentTime.value = audio.currentTime
+      if (Number.isFinite(audio.duration) && audio.duration > 0) audioDuration.value = audio.duration
       audioProgress.value =
         Number.isFinite(audio.duration) && audio.duration > 0
           ? Math.min((audio.currentTime / audio.duration) * 100, 100)
@@ -544,12 +676,14 @@ function mapTask(item: StudentTaskItem, attemptStat: StudentTaskAttemptStat): Ta
     scoreClass: hasScore ? taskScoreClass(Math.round(rawScore)) : 'text-[#9CA3AF]',
     date: item.created_at ? String(item.created_at).slice(0, 10) : '--',
     summary: `共 ${item.segmented_sentences?.length ?? 0} 句 · 已提交 ${attemptStat.count} 次`,
+    teacherReviewed: attemptStat.teacherReviewed,
   }
 }
 
 async function selectAttempt(sessionId: string) {
   stopAudio()
   selectedSessionId.value = sessionId
+  openCommentSessionId.value = ''
   detailLoading.value = true
   detailError.value = ''
   try {
@@ -572,6 +706,7 @@ async function selectTask(taskId: string) {
   selectedSessionId.value = ''
   sessionDetails.value = []
   attempts.value = []
+  openCommentSessionId.value = ''
   detailError.value = ''
   attemptsLoading.value = true
   try {
@@ -583,6 +718,7 @@ async function selectTask(taskId: string) {
         sessionId: record.session_id,
         score: toNumber(record.average_score),
         date: record.completed_at ? String(record.completed_at).slice(0, 10) : '--',
+        teacherComment: String(record.teacher_notes ?? '').trim(),
         sortKey: new Date(record.completed_at || record.created_at).getTime(),
       }))
       .sort((a, b) => (Number.isFinite(a.sortKey) ? a.sortKey : 0) - (Number.isFinite(b.sortKey) ? b.sortKey : 0))
@@ -593,6 +729,7 @@ async function selectTask(taskId: string) {
         score: item.score >= 0 ? `${Math.round(item.score)} 分` : '暂无分数',
         scoreClass: item.score >= 0 ? taskScoreClass(Math.round(item.score)) : 'text-[#9CA3AF]',
         date: item.date,
+        teacherComment: item.teacherComment,
       }))
       .reverse()
     if (attempts.value.length === 1) await selectAttempt(attempts.value[0].sessionId)
@@ -612,7 +749,7 @@ async function loadTasks() {
     const items = res.data ?? []
     // `student/tasks` 不返回提交次数，单独并发补齐，口径与右侧「共 N 次提交」一致
     const stats = await getStudentTaskAttemptStats(items.map((item) => item.task_id))
-    const emptyStat: StudentTaskAttemptStat = { count: 0, lastSubmittedAt: 0 }
+    const emptyStat: StudentTaskAttemptStat = { count: 0, lastSubmittedAt: 0, teacherReviewed: false }
     // 按最后一次提交时间倒序：最近提交的任务排在最上面，未提交的任务排在最后
     tasks.value = items
       .map((item, index) => ({ item, stat: stats[index] ?? emptyStat, order: index }))
@@ -640,6 +777,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopAudio()
+  clearProgressHideTimer()
   cancelHideTooltip()
   window.removeEventListener('scroll', onAnyScroll, true)
 })
@@ -700,12 +838,18 @@ onBeforeUnmount(() => {
                 <span class="text-sm font-black text-[#1F2937]">{{ task.title }}</span>
                 <span class="text-lg font-black" :class="task.scoreClass">{{ task.score }}</span>
               </div>
-              <div class="flex items-center gap-2 mb-2">
+              <div class="flex flex-wrap items-center gap-2 mb-2">
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-black" :class="task.statusClass">
                   {{ task.statusLabel }}
                 </span>
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-black" :class="task.typeClass">
                   {{ task.typeLabel }}
+                </span>
+                <span
+                  v-if="task.teacherReviewed"
+                  class="px-2 py-0.5 rounded-full border border-[#1CB0F6]/30 bg-[#F0F9FF] text-[10px] font-black text-[#0369A1]"
+                >
+                  教师已批改
                 </span>
                 <span class="text-xs font-bold text-[#9CA3AF]">{{ task.date }}</span>
               </div>
@@ -732,27 +876,56 @@ onBeforeUnmount(() => {
                 {{ attempts.length > 1 ? '请选择要查看的提交：' : '该任务仅提交过一次：' }}
               </div>
               <div class="flex flex-wrap gap-2">
-                <button
+                <div
                   v-for="attempt in attempts"
                   :key="attempt.sessionId"
-                  type="button"
-                  class="flex items-center gap-2 rounded-xl border-2 px-4 py-2 transition cursor-pointer"
+                  class="flex items-center gap-2 rounded-xl border-2 px-3 py-1.5 transition"
                   :class="
                     attempt.sessionId === selectedSessionId
                       ? 'border-[#58CC02] bg-[#F7FEE7]'
                       : 'border-[#F1F5F9] bg-white hover:border-[#58CC02]/40'
                   "
-                  @click="selectAttempt(attempt.sessionId)"
                 >
-                  <span
-                    class="text-sm font-black"
-                    :class="attempt.sessionId === selectedSessionId ? 'text-[#46A302]' : 'text-[#1F2937]'"
+                  <button
+                    type="button"
+                    class="flex cursor-pointer items-center gap-2"
+                    @click="selectAttempt(attempt.sessionId)"
                   >
-                    第 {{ attempt.index }} 次
+                    <span
+                      class="text-sm font-black"
+                      :class="attempt.sessionId === selectedSessionId ? 'text-[#46A302]' : 'text-[#1F2937]'"
+                    >
+                      第 {{ attempt.index }} 次
+                    </span>
+                    <span class="text-xs font-black" :class="attempt.scoreClass">{{ attempt.score }}</span>
+                    <span class="text-xs font-bold text-[#9CA3AF]">{{ attempt.date }}</span>
+                  </button>
+                  <button
+                    v-if="attempt.teacherComment"
+                    type="button"
+                    class="shrink-0 cursor-pointer rounded-lg border px-2 py-0.5 text-[11px] font-black transition"
+                    :class="commentButtonClass(attempt.sessionId)"
+                    @click="toggleAttemptComment(attempt.sessionId)"
+                  >
+                    {{ openCommentSessionId === attempt.sessionId ? '收起评语' : '查看教师评语' }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- 教师总体评语：展示在「第几次提交」选择区内部，不与下方评测内容混排 -->
+              <div
+                v-if="openCommentAttempt"
+                class="mt-3 rounded-xl border border-[#1CB0F6]/25 bg-[#F0F9FF] px-4 py-3"
+              >
+                <div class="mb-1 flex items-center gap-2">
+                  <MessageSquareQuote class="h-4 w-4 shrink-0 text-[#1CB0F6]" />
+                  <span class="text-xs font-black text-[#0369A1]">
+                    教师总体评语 · 第 {{ openCommentAttempt.index }} 次提交
                   </span>
-                  <span class="text-xs font-black" :class="attempt.scoreClass">{{ attempt.score }}</span>
-                  <span class="text-xs font-bold text-[#9CA3AF]">{{ attempt.date }}</span>
-                </button>
+                </div>
+                <p class="whitespace-pre-wrap text-sm font-bold leading-relaxed text-[#334155]">
+                  {{ openCommentAttempt.teacherComment }}
+                </p>
               </div>
             </div>
           </template>
@@ -850,6 +1023,7 @@ onBeforeUnmount(() => {
                 <!-- 原句即逐词评分：带下划线的单词，悬停查看音素详情 -->
                 <div v-if="!block.words.length" class="text-lg font-black leading-relaxed tracking-wide text-[#1F2937]">{{ block.text }}</div>
                 <div v-else class="flex flex-wrap items-end gap-x-3 gap-y-3">
+                  <span v-if="block.prefix" class="pb-2.5 text-lg font-black leading-tight text-[#1F2937]">{{ block.prefix }}</span>
                   <span
                     v-for="(word, wi) in block.words"
                     :key="`${word.word}-${wi}`"
@@ -857,7 +1031,7 @@ onBeforeUnmount(() => {
                     @mouseenter="showWordTooltip(word, $event)"
                     @mouseleave="scheduleHideTooltip"
                   >
-                    <span class="px-0.5 text-lg font-black leading-tight text-[#1F2937]">{{ word.word }}</span>
+                    <span class="px-0.5 text-lg font-black leading-tight text-[#1F2937]">{{ word.word }}{{ word.suffix }}</span>
                     <span class="mt-1 h-1.5 w-full rounded-full" :class="underlineColor(word.score)"></span>
                   </span>
                 </div>
@@ -898,13 +1072,53 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
 
-                <!-- 播放进度：仅在播放中显示 -->
-                <div v-if="isBlockPlaying(block.key)" class="h-1 rounded-full bg-[#F1F5F9] overflow-hidden">
+                <!-- 播放进度：独立容器常驻占位，仅切换透明度，出现/隐藏都不会让句子整体移位 -->
+                <div
+                  class="relative flex h-5 items-center"
+                  @mouseenter="isBlockPlaying(block.key) && revealProgress()"
+                  @mousemove="isBlockPlaying(block.key) && revealProgress()"
+                >
                   <div
-                    class="h-full transition-[width] duration-150 ease-linear"
-                    :class="audioKind === 'std' ? 'bg-[#1CB0F6]' : 'bg-[#58CC02]'"
-                    :style="{ width: `${audioProgress}%` }"
-                  ></div>
+                    class="w-full cursor-pointer touch-none select-none py-1.5 transition-opacity duration-300"
+                    :class="
+                      isBlockPlaying(block.key) && progressVisible
+                        ? 'opacity-100'
+                        : 'pointer-events-none opacity-0'
+                    "
+                    @pointerdown="startSeek"
+                    @pointermove="moveSeek"
+                    @pointerup="endSeek"
+                    @pointercancel="endSeek"
+                  >
+                    <div class="h-1.5 w-full overflow-hidden rounded-full bg-[#F1F5F9]">
+                      <div
+                        class="h-full rounded-full"
+                        :class="[
+                          audioKind === 'std' ? 'bg-[#1CB0F6]' : 'bg-[#58CC02]',
+                          audioSeeking ? '' : 'transition-[width] duration-150 ease-linear',
+                        ]"
+                        :style="{ width: `${audioProgress}%` }"
+                      ></div>
+                    </div>
+                  </div>
+                  <!-- 时间读数：仅在进度条可见时展示（绝对定位，不参与占位） -->
+                  <div
+                    class="pointer-events-none absolute right-0 -top-1.5 text-[10px] font-black tabular-nums text-[#9CA3AF] transition-opacity duration-300"
+                    :class="isBlockPlaying(block.key) && progressVisible ? 'opacity-100' : 'opacity-0'"
+                  >
+                    {{ formatAudioTime(audioCurrentTime) }} / {{ formatAudioTime(audioDuration) }}
+                  </div>
+                </div>
+
+                <!-- 该句的教师评语：句子在左上，评语紧随其下（左下），保持紧凑单行风格 -->
+                <div
+                  v-if="block.teacherComment"
+                  class="flex items-start gap-2 rounded-xl border border-[#1CB0F6]/20 bg-[#F0F9FF] px-3 py-2"
+                >
+                  <MessageSquareQuote class="mt-0.5 h-4 w-4 shrink-0 text-[#1CB0F6]" />
+                  <div class="min-w-0 text-xs font-bold leading-relaxed text-[#334155]">
+                    <span class="mr-1 font-black text-[#0369A1]">教师评语</span>{{ block.teacherComment }}
+                  </div>
                 </div>
               </div>
 

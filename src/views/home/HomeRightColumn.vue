@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { PlayCircle, Square } from 'lucide-vue-next'
+import { Loader2, PlayCircle, Square } from 'lucide-vue-next'
 import { useHomeEvaluation } from './useHomeEvaluation'
 import ScoreRadarChart from '../../components/ScoreRadarChart.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
+import type { WordScoreItem } from '../../api/endpoints'
+import { matchSentenceWords } from '../../utils/sentenceWords'
+import { useToast } from '../../composables/useToast'
 
 const {
   sentences,
@@ -18,7 +21,10 @@ const {
   averageScore,
   playingRecording,
   toggleRecordedAudio,
+  stopAudio,
 } = useHomeEvaluation()
+
+const toast = useToast()
 
 const toNumber = (value: unknown) => {
   if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -49,16 +55,49 @@ const underlineColor = (value: number) => {
 
 const hasData = () => !!currentResultScore.value || completedCount.value > 0
 
+// ---- 逐词渲染：后端词列表不含标点，按原句把标点补回词尾 ----
+const wordDisplays = computed(() => {
+  const words = currentWords.value
+  const layout = matchSentenceWords(currentSentence.value, words.map((word) => word.word))
+  return {
+    prefix: layout.prefix,
+    items: layout.words.map((matched) => ({
+      index: matched.index,
+      text: matched.value,
+      suffix: matched.suffix,
+      word: words[matched.index],
+    })),
+  }
+})
+
 // ---- 悬停单词浮层：fixed + Teleport 到 body，避免被容器 overflow 裁切（穿模） ----
 const hoveredIndex = ref<number | null>(null)
 const tooltipStyle = ref<Record<string, string>>({})
 const hoveredWord = computed(() =>
   hoveredIndex.value === null ? null : currentWords.value[hoveredIndex.value] ?? null,
 )
+// 鼠标从单词移到浮层上时不该立刻收起，留一小段缓冲时间
+let hideTooltipTimer: number | null = null
+
+const cancelHideTooltip = () => {
+  if (hideTooltipTimer !== null) {
+    window.clearTimeout(hideTooltipTimer)
+    hideTooltipTimer = null
+  }
+}
+
+const scheduleHideTooltip = () => {
+  cancelHideTooltip()
+  hideTooltipTimer = window.setTimeout(() => {
+    hoveredIndex.value = null
+    hideTooltipTimer = null
+  }, 180)
+}
 
 const showWordTooltip = (index: number, event: MouseEvent) => {
   const el = event.currentTarget as HTMLElement | null
   if (!el) return
+  cancelHideTooltip()
   const rect = el.getBoundingClientRect()
   const width = 230
   const left = Math.min(Math.max(rect.left + rect.width / 2 - width / 2, 8), window.innerWidth - width - 8)
@@ -73,7 +112,131 @@ const showWordTooltip = (index: number, event: MouseEvent) => {
 }
 
 const hideWordTooltip = () => {
+  cancelHideTooltip()
   hoveredIndex.value = null
+}
+
+// ---- 词级发音：没有独立接口，用本句原始录音按 start_ms / duration_ms 切片播放 ----
+const wordAudioKey = ref('')
+const wordAudioLoading = ref(false)
+const wordAudioPlaying = ref(false)
+let wordAudio: HTMLAudioElement | null = null
+let wordAudioUrl: string | null = null
+let wordAudioRafId = 0
+// 递增令牌：切换单词或停止播放时作废旧回调
+let wordAudioToken = 0
+
+// 后端下发的 start_ms / duration_ms 实际是 Azure 的 Offset / Duration，
+// 单位为 ticks（100 纳秒）：1 毫秒 = 10,000 ticks，1 秒 = 10,000,000 ticks。
+// HTMLMediaElement.currentTime 的单位是秒，故按「ticks/秒」换算。
+const TICKS_PER_SECOND = 10_000_000
+
+// 主页没有评测 id，用「句子下标 + 词下标」唯一标识当前试听的词
+const wordAudioId = (index: number) => `${activeIndex.value}:${index}`
+const isWordAudioActive = (index: number) =>
+  wordAudioKey.value === wordAudioId(index) && (wordAudioLoading.value || wordAudioPlaying.value)
+const hoveredWordAudioActive = computed(() =>
+  hoveredIndex.value === null ? false : isWordAudioActive(hoveredIndex.value),
+)
+
+const releaseWordAudio = () => {
+  wordAudioToken += 1
+  if (wordAudioRafId) {
+    window.cancelAnimationFrame(wordAudioRafId)
+    wordAudioRafId = 0
+  }
+  if (wordAudio) {
+    wordAudio.onloadedmetadata = null
+    wordAudio.onended = null
+    wordAudio.onerror = null
+    wordAudio.pause()
+    wordAudio = null
+  }
+  if (wordAudioUrl) {
+    URL.revokeObjectURL(wordAudioUrl)
+    wordAudioUrl = null
+  }
+  wordAudioKey.value = ''
+  wordAudioLoading.value = false
+  wordAudioPlaying.value = false
+}
+
+// 再次点击同一单词停止，否则从该词的 start_ms 播放 duration_ms 时长
+const playWordAudio = async (index: number) => {
+  if (isWordAudioActive(index)) {
+    releaseWordAudio()
+    return
+  }
+  const word: WordScoreItem | undefined = currentWords.value[index]
+  if (!word) return
+  const blob = currentRecordedAudio.value
+  if (!blob) {
+    toast.push('本句暂无录音，无法试听单词发音', 'warning')
+    return
+  }
+  const startMs = typeof word.start_ms === 'number' ? word.start_ms : NaN
+  const durationMs = typeof word.duration_ms === 'number' ? word.duration_ms : NaN
+  if (!Number.isFinite(startMs) || startMs < 0 || !Number.isFinite(durationMs) || durationMs <= 0) {
+    toast.push(`「${word.word}」暂无发音区间信息`, 'warning')
+    return
+  }
+  // 与整句朗读/回放互斥
+  stopAudio()
+  const token = ++wordAudioToken
+  wordAudioKey.value = wordAudioId(index)
+  wordAudioLoading.value = true
+  try {
+    const url = URL.createObjectURL(blob)
+    wordAudioUrl = url
+    const audio = new Audio(url)
+    audio.preload = 'auto'
+    wordAudio = audio
+    await new Promise<void>((resolve, reject) => {
+      audio.onloadedmetadata = () => resolve()
+      audio.onerror = () => reject(new Error('音频加载失败'))
+      if (audio.readyState >= 1) resolve()
+    })
+    if (token !== wordAudioToken) return
+    audio.currentTime = startMs / TICKS_PER_SECOND
+    wordAudioLoading.value = false
+    wordAudioPlaying.value = true
+    const endSeconds = (startMs + durationMs) / TICKS_PER_SECOND
+    // 按音频时钟判停，比 timeupdate（约 250ms 粒度）精确
+    const watchProgress = () => {
+      if (token !== wordAudioToken) return
+      if (audio.currentTime >= endSeconds) {
+        releaseWordAudio()
+        return
+      }
+      wordAudioRafId = window.requestAnimationFrame(watchProgress)
+    }
+    wordAudioRafId = window.requestAnimationFrame(watchProgress)
+    audio.onended = () => {
+      if (token === wordAudioToken) releaseWordAudio()
+    }
+    audio.onerror = () => {
+      if (token !== wordAudioToken) return
+      toast.push('音频播放失败', 'error')
+      releaseWordAudio()
+    }
+    await audio.play()
+  } catch (error) {
+    if (token !== wordAudioToken) return
+    releaseWordAudio()
+    toast.push(error instanceof Error ? error.message : '音频获取失败，请稍后重试', 'error')
+  }
+}
+
+// 切句后旧的单词切片播放没有意义，直接停止并收起浮层
+watch(currentSentence, () => {
+  hideWordTooltip()
+  releaseWordAudio()
+})
+
+// 浮层里的播放按钮：作用于当前悬停的词
+const toggleHoveredWordAudio = () => {
+  if (hoveredIndex.value === null) return
+  void playWordAudio(hoveredIndex.value)
 }
 
 // 滚动（含容器内滚动）时锚点会漂移，直接收起浮层
@@ -117,6 +280,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', onAnyScroll, true)
   window.removeEventListener('resize', measureRightSentence)
+  releaseWordAudio()
 })
 
 </script>
@@ -205,15 +369,16 @@ onBeforeUnmount(() => {
             <!-- 逐词下划线：绿 / 黄 / 红 表示得分档位 -->
             <div class="flex-1 min-h-0 overflow-y-auto rounded-2xl bg-white border border-gray-100 p-4">
               <div class="flex flex-wrap items-end gap-x-3 gap-y-3">
+                <span v-if="wordDisplays.prefix" class="pb-2.5 text-lg font-black leading-tight text-[#1B254B]">{{ wordDisplays.prefix }}</span>
                 <span
-                  v-for="(word, index) in currentWords"
-                  :key="`${word.word}-${index}`"
+                  v-for="item in wordDisplays.items"
+                  :key="`${item.index}-${item.text}`"
                   class="inline-flex cursor-help flex-col items-stretch transition-transform hover:-translate-y-0.5"
-                  @mouseenter="showWordTooltip(index, $event)"
-                  @mouseleave="hideWordTooltip"
+                  @mouseenter="showWordTooltip(item.index, $event)"
+                  @mouseleave="scheduleHideTooltip"
                 >
-                  <span class="px-0.5 text-lg font-black leading-tight text-[#1B254B]">{{ word.word }}</span>
-                  <span class="mt-1 h-1.5 w-full rounded-full" :class="underlineColor(toNumber(word.pronunciation))"></span>
+                  <span class="px-0.5 text-lg font-black leading-tight text-[#1B254B]">{{ item.text }}{{ item.suffix }}</span>
+                  <span class="mt-1 h-1.5 w-full rounded-full" :class="underlineColor(toNumber(item.word.pronunciation))"></span>
                 </span>
               </div>
             </div>
@@ -259,8 +424,10 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div
         v-if="hoveredWord"
-        class="pointer-events-none fixed z-[60] rounded-xl border border-[#E8ECF2] bg-white/95 px-3 py-2.5 text-[#1F2937] shadow-[0_12px_32px_rgba(15,23,42,0.14)] backdrop-blur-sm"
+        class="fixed z-[60] rounded-xl border border-[#E8ECF2] bg-white/95 px-3 py-2.5 text-[#1F2937] shadow-[0_12px_32px_rgba(15,23,42,0.14)] backdrop-blur-sm"
         :style="tooltipStyle"
+        @mouseenter="cancelHideTooltip"
+        @mouseleave="scheduleHideTooltip"
       >
         <div class="flex items-center gap-1.5">
           <span class="truncate text-sm font-black tracking-tight">{{ hoveredWord.word }}</span>
@@ -270,6 +437,23 @@ onBeforeUnmount(() => {
           >
             {{ hoveredWord.error_type }}
           </span>
+          <!-- 播放该单词的用户发音：本句原始录音按 start_ms/duration_ms 切片 -->
+          <button
+            type="button"
+            class="ml-auto flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors disabled:cursor-wait"
+            :class="
+              hoveredWordAudioActive
+                ? 'bg-[#70C125] text-white'
+                : 'bg-[#F0F7E2] text-[#356B00] hover:bg-[#E4F0D0]'
+            "
+            :title="hoveredWordAudioActive ? '停止播放' : '播放我的该词发音'"
+            :disabled="wordAudioLoading && hoveredWordAudioActive"
+            @click="toggleHoveredWordAudio()"
+          >
+            <Loader2 v-if="wordAudioLoading && hoveredWordAudioActive" class="h-3.5 w-3.5 animate-spin" />
+            <Square v-else-if="hoveredWordAudioActive" class="h-3.5 w-3.5" />
+            <PlayCircle v-else class="h-3.5 w-3.5" />
+          </button>
         </div>
         <div class="mt-1.5 flex items-center gap-1.5">
           <span class="text-[11px] font-bold text-[#9CA3AF]">单词得分</span>

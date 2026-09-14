@@ -18,6 +18,11 @@ const searchTerm = ref('')
 const selectedItem = ref('请选择')
 const trendTimeRange = ref('最近一周')
 
+// 项目下拉框（首行为搜索框）
+const itemPicker = ref<HTMLElement | null>(null)
+const itemSearchInput = ref<HTMLInputElement | null>(null)
+const isPickerOpen = ref(false)
+
 // 排名数据
 const ranking = ref<HistoryRanking | null>(null)
 const rankingLoading = ref(false)
@@ -150,6 +155,7 @@ function onDataTypeChange() {
   chartDetail.value = null
   hasChart.value = false
   trendChart?.destroy()
+  closePicker()
 }
 
 async function generateChart() {
@@ -167,30 +173,56 @@ async function generateChart() {
       chartDetail.value = await getStudentHistoryPhonemeDetail(selectedItem.value)
     }
     hasChart.value = true
-    await nextTick()
-    renderTrendChart()
   } catch {
     chartDetail.value = null
     hasChart.value = false
     chartError.value = '图表数据加载失败，请重试'
   } finally {
+    // 必须先结束 loading，模板才会渲染出 canvas
     chartLoading.value = false
+  }
+  if (hasChart.value) {
+    await nextTick()
+    renderTrendChart()
   }
 }
 
+async function togglePicker() {
+  isPickerOpen.value = !isPickerOpen.value
+  if (isPickerOpen.value) {
+    await nextTick()
+    itemSearchInput.value?.focus()
+  } else {
+    searchTerm.value = ''
+  }
+}
+
+function closePicker() {
+  isPickerOpen.value = false
+  searchTerm.value = ''
+}
+
+function selectItem(opt: string) {
+  selectedItem.value = opt
+  closePicker()
+}
+
+function onDocumentClick(event: MouseEvent) {
+  if (!isPickerOpen.value) return
+  if (itemPicker.value && !itemPicker.value.contains(event.target as Node)) closePicker()
+}
+
 watch(dataType, onDataTypeChange)
-watch([searchTerm], () => {
-  const list = itemOptions.value
-  if (list.length && !list.includes(selectedItem.value)) selectedItem.value = '请选择'
-})
 
 onMounted(() => {
   loadRanking()
   loadOptions()
+  document.addEventListener('click', onDocumentClick)
 })
 
 onBeforeUnmount(() => {
   trendChart?.destroy()
+  document.removeEventListener('click', onDocumentClick)
 })
 </script>
 
@@ -348,28 +380,53 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <!-- 选择项目 (搜索) -->
-            <div class="col-span-4">
+            <!-- 选择项目 (下拉首行内嵌搜索) -->
+            <div class="col-span-6">
               <label class="block text-xs font-black text-[#374151] mb-1 uppercase tracking-wider">选择项目:</label>
-              <input
-                v-model="searchTerm"
-                type="text"
-                placeholder="搜索..."
-                class="w-full bg-white border-2 border-[#E2E8F0] rounded-xl px-3 py-2 font-medium text-sm placeholder-[#9CA3AF] focus:border-[#58CC02] focus:outline-none"
-              />
-            </div>
-
-            <!-- 下拉选择 -->
-            <div class="col-span-3">
-              <div class="relative">
-                <select
-                  v-model="selectedItem"
-                  class="w-full bg-white border-2 border-[#E2E8F0] rounded-xl px-3 py-2 font-bold text-sm focus:border-[#58CC02] focus:outline-none cursor-pointer appearance-none"
+              <div ref="itemPicker" class="relative">
+                <button
+                  type="button"
+                  class="w-full bg-white border-2 border-[#E2E8F0] rounded-xl pl-3 pr-9 py-2 font-bold text-sm text-left focus:border-[#58CC02] focus:outline-none cursor-pointer"
+                  :class="selectedItem === '请选择' ? 'text-[#9CA3AF]' : 'text-[#3C3C3C]'"
+                  @click="togglePicker"
                 >
-                  <option>请选择</option>
-                  <option v-for="opt in itemOptions" :key="opt" :value="opt">{{ opt }}</option>
-                </select>
+                  <span class="block truncate">{{ selectedItem }}</span>
+                </button>
                 <ChevronDown class="w-4 h-4 text-[#9CA3AF] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+
+                <div
+                  v-if="isPickerOpen"
+                  class="absolute z-20 mt-2 w-full bg-white border-2 border-[#E2E8F0] rounded-xl overflow-hidden"
+                  style="box-shadow: 0 8px 24px rgba(0,0,0,0.08)"
+                >
+                  <!-- 第一行：搜索 -->
+                  <div class="p-2 border-b border-[#F1F5F9]">
+                    <input
+                      ref="itemSearchInput"
+                      v-model="searchTerm"
+                      type="text"
+                      placeholder="搜索..."
+                      class="w-full bg-[#F8FAFB] border-2 border-[#E2E8F0] rounded-lg px-3 py-2 font-medium text-sm placeholder-[#9CA3AF] focus:border-[#58CC02] focus:outline-none"
+                      @keydown.esc="closePicker"
+                    />
+                  </div>
+                  <ul class="max-h-[240px] overflow-y-auto py-1">
+                    <li v-if="optionsLoading" class="px-3 py-2 text-sm font-bold text-[#9CA3AF]">加载中…</li>
+                    <li v-else-if="!itemOptions.length" class="px-3 py-2 text-sm font-bold text-[#9CA3AF]">无匹配项目</li>
+                    <template v-else>
+                      <li v-for="opt in itemOptions" :key="opt">
+                        <button
+                          type="button"
+                          class="w-full text-left px-3 py-2 text-sm font-bold truncate hover:bg-[#F0F9FF] cursor-pointer"
+                          :class="opt === selectedItem ? 'bg-[#F0F9FF] text-[#1899D6]' : 'text-[#1F2937]'"
+                          @click="selectItem(opt)"
+                        >
+                          {{ opt }}
+                        </button>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
               </div>
             </div>
 
@@ -390,7 +447,7 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- 生成图表按钮 -->
-            <div class="col-span-1">
+            <div class="col-span-2">
               <button
                 class="w-full bg-[#58CC02] text-white font-black text-sm px-4 py-2 rounded-xl border-b-4 border-[#46A302] hover:brightness-105 active:border-b-2 active:translate-y-0.5 transition-all whitespace-nowrap cursor-pointer inline-flex items-center justify-center gap-2"
                 style="box-shadow: none"

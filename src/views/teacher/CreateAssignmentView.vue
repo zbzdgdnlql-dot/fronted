@@ -24,6 +24,8 @@ const taskType = ref<'homework' | 'practice'>('homework')
 const segmentedSentences = ref<string[]>([])
 const segmentEditorOpen = ref(false)
 const segmentDraft = ref<string[]>([])
+/** 确认弹窗中当前选中的行索引，用于在选中行下方插入新行 */
+const selectedSegmentIndex = ref<number | null>(null)
 const classes = ref<TeacherClassItem[]>([])
 const selectedClassIds = ref<string[]>([])
 const notes = ref('')
@@ -52,8 +54,8 @@ const toDateTimeInput = (date: Date) => {
   ].join('-') + `T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-const availableFrom = ref(toDateTimeInput(new Date()))
-const availableUntil = ref(toDateTimeInput(new Date(Date.now() + DEFAULT_DURATION_MS)))
+const availableFrom = ref('')
+const availableUntil = ref('')
 const activeTimeField = ref<TimeField | null>(null)
 const calendarMonth = ref(new Date())
 const calendarPanel = ref<CalendarPanel>('date')
@@ -67,11 +69,14 @@ const timeFieldConfigs = [
   { id: 'until', label: '截止时间' },
 ] as const
 
-const modes: Array<{ id: TaskMode; label: string; desc: string }> = [
+const modes: Array<{ id: TaskMode; label: string; desc: string; disabled?: boolean }> = [
   { id: 'sentence', label: '句子模式', desc: '正常评测，逐句练习发音' },
-  { id: 'word', label: '单词模式', desc: '仅评测音准，逐个单词纠音' },
-  { id: 'pair', label: '词对模式', desc: '对照练习，含相同音素的单词成对练' },
+  { id: 'word', label: '单词模式', desc: '仅评测音准，逐个单词纠音', disabled: true },
+  { id: 'pair', label: '词对模式', desc: '对照练习，含相同音素的单词成对练', disabled: true },
 ]
+
+/** 暂未开放的模式统一悬停提示 */
+const MODE_DISABLED_HINT = '该功能开发中，敬请期待'
 
 /** 各模式的文案与切分提示，避免模板里堆三元表达式 */
 const modeCopy: Record<TaskMode, {
@@ -155,7 +160,8 @@ const onSegment = () => {
   if (!text) return
   if (text === segmentSource.value) return
   segmentsConfirmed.value = false
-  void segment()
+  // 失焦时只静默切分，不弹确认窗；确认窗仅在保存/发布时由 ensureSegmentsConfirmed 打开
+  void segment(false)
 }
 
 /** 用新结果覆盖分句；仅在结果变化时弹出可修改确认窗口，避免每次失焦都弹 */
@@ -165,6 +171,7 @@ const applySegments = (next: string[], openEditor = true) => {
   if (changed) segmentsConfirmed.value = false
   if (openEditor && changed && next.length) {
     segmentDraft.value = [...next]
+    selectedSegmentIndex.value = null
     segmentEditorOpen.value = true
   }
 }
@@ -173,13 +180,23 @@ const addSegmentDraft = () => {
   segmentDraft.value.push('')
 }
 
+/** 在选中的一行下方插入空白行，并选中新行 */
+const insertSegmentDraftBelow = (index: number) => {
+  segmentDraft.value.splice(index + 1, 0, '')
+  selectedSegmentIndex.value = index + 1
+}
+
 const removeSegmentDraft = (index: number) => {
   segmentDraft.value.splice(index, 1)
+  if (selectedSegmentIndex.value === null) return
+  if (selectedSegmentIndex.value === index) selectedSegmentIndex.value = null
+  else if (selectedSegmentIndex.value > index) selectedSegmentIndex.value -= 1
 }
 
 /** 取消：关闭弹窗并放弃待执行动作，不改变 segmentedSentences */
 const cancelSegmentDraft = () => {
   segmentEditorOpen.value = false
+  selectedSegmentIndex.value = null
   pendingAction.value = null
 }
 
@@ -194,6 +211,7 @@ const confirmSegmentDraft = () => {
   segmentSource.value = contentText.value.trim()
   segmentedText.value = contentText.value.trim()
   segmentEditorOpen.value = false
+  selectedSegmentIndex.value = null
   // 确认后继续执行此前被拦下的保存/发布动作，避免教师再点一次
   const action = pendingAction.value
   pendingAction.value = null
@@ -223,6 +241,15 @@ const activeDateTime = computed(() => {
   if (!activeTimeField.value) return null
   return parseDateTimeInput(activeTimeField.value === 'from' ? availableFrom.value : availableUntil.value)
 })
+/** 已选定的开始/截止日期范围（仅比较到「日」），用于日历高亮区间底色 */
+const selectedRange = computed(() => {
+  const from = parseDateTimeInput(availableFrom.value)
+  const until = parseDateTimeInput(availableUntil.value)
+  if (!from || !until) return null
+  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime()
+  const end = new Date(until.getFullYear(), until.getMonth(), until.getDate()).getTime()
+  return start <= end ? { start, end } : null
+})
 const calendarDays = computed(() => {
   const firstDay = new Date(calendarMonth.value.getFullYear(), calendarMonth.value.getMonth(), 1)
   const startDate = new Date(firstDay)
@@ -230,6 +257,8 @@ const calendarDays = computed(() => {
   return Array.from({ length: 42 }, (_, index) => {
     const date = new Date(startDate)
     date.setDate(startDate.getDate() + index)
+    const dayTime = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+    const range = selectedRange.value
     return {
       key: toDateTimeInput(date).slice(0, 10),
       date,
@@ -237,6 +266,7 @@ const calendarDays = computed(() => {
       inMonth: date.getMonth() === calendarMonth.value.getMonth(),
       isToday: isSameDate(date, new Date()),
       isSelected: activeDateTime.value ? isSameDate(date, activeDateTime.value) : false,
+      inRange: !!range && dayTime >= range.start && dayTime <= range.end,
     }
   })
 })
@@ -253,7 +283,9 @@ const isTimeRangeInvalid = computed(() => {
   return new Date(availableFrom.value).getTime() >= new Date(availableUntil.value).getTime()
 })
 const timeRangeHint = computed(() => {
-  if (!availableFrom.value || !availableUntil.value) return '请选择任务开放的起止时间'
+  if (!availableFrom.value && !availableUntil.value) return '未设置，视为不限时间'
+  if (!availableFrom.value) return '未设置开始时间，视为立即开放'
+  if (!availableUntil.value) return '未设置截止时间，视为不限时间'
   const from = new Date(availableFrom.value).getTime()
   const until = new Date(availableUntil.value).getTime()
   if (from >= until) return '截止时间需要晚于开始时间'
@@ -290,7 +322,7 @@ const setTimeValue = (field: TimeField, date: Date) => {
 
 const formatDisplayDateTime = (value: string) => {
   const date = parseDateTimeInput(value)
-  if (!date) return '请选择时间'
+  if (!date) return '不限（点击设置）'
   return date.toLocaleString('zh-CN', {
     month: '2-digit',
     day: '2-digit',
@@ -298,6 +330,13 @@ const formatDisplayDateTime = (value: string) => {
     minute: '2-digit',
     hour12: false,
   })
+}
+
+/** 清空某个时间字段，回到「不限」状态 */
+const clearTimeField = (field: TimeField) => {
+  if (field === 'from') availableFrom.value = ''
+  else availableUntil.value = ''
+  if (activeTimeField.value === field) activeTimeField.value = null
 }
 
 const openTimePicker = (field: TimeField) => {
@@ -359,11 +398,14 @@ const useTodayForActiveField = () => {
 
 const setAvailableFromNow = () => {
   const now = new Date()
-  const currentFrom = new Date(availableFrom.value).getTime()
-  const currentUntil = new Date(availableUntil.value).getTime()
-  const duration = currentUntil > currentFrom ? currentUntil - currentFrom : DEFAULT_DURATION_MS
+  const currentFrom = parseDateTimeInput(availableFrom.value)
+  const currentUntil = parseDateTimeInput(availableUntil.value)
+  const duration = currentFrom && currentUntil && currentUntil.getTime() > currentFrom.getTime()
+    ? currentUntil.getTime() - currentFrom.getTime()
+    : DEFAULT_DURATION_MS
   availableFrom.value = toDateTimeInput(now)
-  availableUntil.value = toDateTimeInput(new Date(now.getTime() + duration))
+  // 截止时间未设置表示「不限」，保持留空，不因点「现在」而被自动填上
+  if (currentUntil) availableUntil.value = toDateTimeInput(new Date(now.getTime() + duration))
 }
 
 const toIso = (value: string) => {
@@ -390,6 +432,8 @@ const segment = async (openEditor = true) => {
 }
 
 const onModeSelect = (mode: TaskMode) => {
+  // 单词/词对模式暂未开放，点击不生效（悬停提示见模板）
+  if (modes.some((item) => item.id === mode && item.disabled)) return
   if (selectedMode.value === mode) return
   selectedMode.value = mode
   // 换模式会改变切分口径，需重新确认分句
@@ -446,13 +490,11 @@ const ensureSegmentsConfirmed = async (action: 'publish' | 'template'): Promise<
 
 const doPublish = async () => {
   const isPractice = taskType.value === 'practice'
-  // 练习任务不设截止时间与尝试次数；后端开放时间字段非空，用远期时间表示「不限」
-  const from = isPractice ? new Date().toISOString() : toIso(availableFrom.value)
-  const until = isPractice ? PRACTICE_UNTIL_ISO : toIso(availableUntil.value)
-  if (!from || !until) {
-    toast.push('请选择开始和截止时间', 'warning')
-    return
-  }
+  const nowIso = new Date().toISOString()
+  // 练习任务不设截止时间与尝试次数；后端开放时间字段非空：
+  // 未设置开始时间按「立即开放」、未设置截止时间按远期时间表示「不限」
+  const from = isPractice ? nowIso : (toIso(availableFrom.value) ?? nowIso)
+  const until = isPractice ? PRACTICE_UNTIL_ISO : (toIso(availableUntil.value) ?? PRACTICE_UNTIL_ISO)
   if (new Date(from).getTime() >= new Date(until).getTime()) {
     toast.push('截止时间需要晚于开始时间', 'warning')
     return
@@ -601,16 +643,39 @@ onMounted(() => {
           <div
             v-for="mode in modes"
             :key="mode.id"
-            :class="[
-              'bg-white rounded-xl p-6 flex flex-col gap-2 cursor-pointer transition-colors border shadow-[0px_4px_20px_rgba(0,0,0,0.04)]',
-              selectedMode === mode.id
-                ? 'border-[#356B00] border-2'
-                : 'border-[#F1F5F9] hover:border-[#58CC02]/20',
-            ]"
-            @click="onModeSelect(mode.id)"
+            class="relative group"
           >
-            <h3 class="text-sm font-black text-[#1F2937]">{{ mode.label }}</h3>
-            <p class="text-xs font-bold text-[#9CA3AF]">{{ mode.desc }}</p>
+            <div
+              :class="[
+                'h-full bg-white rounded-xl p-6 flex flex-col gap-2 transition-colors border shadow-[0px_4px_20px_rgba(0,0,0,0.04)]',
+                mode.disabled
+                  ? 'cursor-not-allowed bg-[#F8FAFC] opacity-60 border-[#F1F5F9]'
+                  : selectedMode === mode.id
+                    ? 'cursor-pointer border-[#356B00] border-2'
+                    : 'cursor-pointer border-[#F1F5F9] hover:border-[#58CC02]/20',
+              ]"
+              @click="onModeSelect(mode.id)"
+            >
+              <h3
+                class="text-sm font-black"
+                :class="mode.disabled ? 'text-[#9CA3AF]' : 'text-[#1F2937]'"
+              >
+                {{ mode.label }}
+              </h3>
+              <p class="text-xs font-bold" :class="mode.disabled ? 'text-[#CBD5E1]' : 'text-[#9CA3AF]'">{{ mode.desc }}</p>
+              <span
+                v-if="mode.disabled"
+                class="w-fit px-2 py-0.5 rounded-full bg-[#E5E7EB] text-[10px] font-black text-[#6B7280]"
+              >
+                开发中
+              </span>
+            </div>
+            <span
+              v-if="mode.disabled"
+              class="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-30 w-max max-w-[220px] rounded-lg bg-[#1F2937] px-3 py-2 text-xs font-bold leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
+            >
+              {{ MODE_DISABLED_HINT }}
+            </span>
           </div>
         </div>
 
@@ -625,26 +690,6 @@ onMounted(() => {
             :placeholder="modeText.contentPlaceholder"
             @blur="onSegment"
           />
-        </div>
-
-        <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
-          <div class="flex flex-col gap-4">
-            <h3 class="text-sm font-black text-[#1F2937]">{{ modeText.segmentTitle }}</h3>
-          </div>
-
-          <div v-if="segmentedSentences.length === 0" class="flex items-center justify-center py-8">
-            <p class="text-sm font-bold text-[#9CA3AF]">{{ modeText.segmentEmpty }}</p>
-          </div>
-          <div v-else class="flex flex-col gap-2">
-            <div
-              v-for="(sentence, idx) in segmentedSentences"
-              :key="idx"
-              class="flex items-center gap-3 px-4 py-2 bg-[#F8FAFC] rounded-lg"
-            >
-              <span class="text-xs font-black text-[#9CA3AF] w-8 shrink-0">#{{ idx + 1 }}</span>
-              <span class="text-sm font-bold text-[#1F2937]">{{ sentence }}</span>
-            </div>
-          </div>
         </div>
 
         <div v-if="taskType === 'homework'" class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
@@ -670,14 +715,24 @@ onMounted(() => {
                 >
                   <span class="flex items-center justify-between gap-2 h-7">
                     <span class="text-xs font-bold text-[#9CA3AF]">{{ field.label }}</span>
-                    <button
-                      v-if="field.id === 'from'"
-                      type="button"
-                      class="px-2.5 py-1 rounded-md bg-white border border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
-                      @click="setAvailableFromNow"
-                    >
-                      现在
-                    </button>
+                    <span class="flex items-center gap-1.5">
+                      <button
+                        v-if="field.id === 'from'"
+                        type="button"
+                        class="px-2.5 py-1 rounded-md bg-white border border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
+                        @click="setAvailableFromNow"
+                      >
+                        现在
+                      </button>
+                      <button
+                        v-if="getTimeValue(field.id)"
+                        type="button"
+                        class="px-2.5 py-1 rounded-md bg-white border border-[#E2E8F0] text-xs font-black text-[#64748B] hover:bg-[#F8FAFC] transition-colors"
+                        @click="clearTimeField(field.id)"
+                      >
+                        清空
+                      </button>
+                    </span>
                   </span>
 
                   <button
@@ -806,11 +861,13 @@ onMounted(() => {
                                 'h-9 rounded-lg text-sm font-bold transition-colors',
                                 day.isSelected
                                   ? 'bg-[#356B00] text-white'
-                                  : day.isToday
-                                    ? 'bg-[#F2F5E8] text-[#356B00]'
-                                    : day.inMonth
-                                      ? 'text-[#1F2937] hover:bg-[#F8FAFC]'
-                                      : 'text-[#CBD5E1] hover:bg-[#F8FAFC]',
+                                  : day.inRange
+                                    ? 'bg-[#E6F4D8] text-[#356B00]'
+                                    : day.isToday
+                                      ? 'bg-[#F2F5E8] text-[#356B00]'
+                                      : day.inMonth
+                                        ? 'text-[#1F2937] hover:bg-[#F8FAFC]'
+                                        : 'text-[#CBD5E1] hover:bg-[#F8FAFC]',
                               ]"
                               @click="selectCalendarDate(day.date)"
                             >
@@ -864,13 +921,23 @@ onMounted(() => {
                     </div>
 
                     <div class="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-[#F1F5F9]">
-                      <button
-                        type="button"
-                        class="px-3 py-2 rounded-lg text-xs font-black text-[#356B00] hover:bg-[#F2F5E8]"
-                        @click="useTodayForActiveField"
-                      >
-                        今天
-                      </button>
+                      <div class="flex items-center gap-1">
+                        <button
+                          type="button"
+                          class="px-3 py-2 rounded-lg text-xs font-black text-[#356B00] hover:bg-[#F2F5E8]"
+                          @click="useTodayForActiveField"
+                        >
+                          今天
+                        </button>
+                        <button
+                          v-if="activeTimeField && getTimeValue(activeTimeField)"
+                          type="button"
+                          class="px-3 py-2 rounded-lg text-xs font-black text-[#64748B] hover:bg-[#F8FAFC]"
+                          @click="clearTimeField(activeTimeField)"
+                        >
+                          清空
+                        </button>
+                      </div>
                       <button
                         type="button"
                         class="px-4 py-2 rounded-lg bg-[#356B00] text-xs font-black text-white hover:bg-[#2E5E00]"
@@ -1038,25 +1105,35 @@ onMounted(() => {
           <p class="text-xs font-bold text-[#9CA3AF]">请核对自动切分结果，可直接修改、删除或补充后再发布</p>
         </div>
         <div class="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-2">
-          <div
-            v-for="(_segment, idx) in segmentDraft"
-            :key="idx"
-            class="flex items-center gap-2"
-          >
-            <span class="text-xs font-black text-[#9CA3AF] w-8 shrink-0">#{{ idx + 1 }}</span>
-            <input
-              v-model="segmentDraft[idx]"
-              type="text"
-              class="flex-1 px-3 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
-            />
-            <button
-              type="button"
-              class="w-9 h-9 shrink-0 rounded-lg border border-[#E2E8F0] text-[#BA1A1A] font-black hover:bg-[#FEF2F2] transition-colors"
-              @click="removeSegmentDraft(idx)"
+          <template v-for="(_segment, idx) in segmentDraft" :key="idx">
+            <div
+              class="flex items-center gap-2 rounded-lg transition-colors"
+              :class="selectedSegmentIndex === idx ? 'bg-[#F2F8E8] ring-2 ring-[#58CC02]' : ''"
+              @click="selectedSegmentIndex = idx"
             >
-              ×
+              <span class="text-xs font-black text-[#9CA3AF] w-8 shrink-0 pl-1">#{{ idx + 1 }}</span>
+              <input
+                v-model="segmentDraft[idx]"
+                type="text"
+                class="flex-1 px-3 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+              />
+              <button
+                type="button"
+                class="w-9 h-9 shrink-0 rounded-lg border border-[#E2E8F0] text-[#BA1A1A] font-black hover:bg-[#FEF2F2] transition-colors"
+                @click.stop="removeSegmentDraft(idx)"
+              >
+                ×
+              </button>
+            </div>
+            <button
+              v-if="selectedSegmentIndex === idx"
+              type="button"
+              class="self-start ml-8 px-3 py-1.5 rounded-lg border border-dashed border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
+              @click.stop="insertSegmentDraftBelow(idx)"
+            >
+              在下方添加行
             </button>
-          </div>
+          </template>
           <button
             type="button"
             class="mt-1 self-start px-3 py-2 rounded-lg border border-dashed border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"

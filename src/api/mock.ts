@@ -441,6 +441,7 @@ export async function resolveMock(
     return { ok: true, data: { items: SCHOOLS.filter((s) => s.school_name.toLowerCase().includes(kw)) } }
   }
   if (m === 'GET' && p === '/auth/users/user_detail') return currentUserDetail()
+  if (m === 'POST' && p === '/auth/users/edit_user_info') return { ok: true }
 
   // ---------- 学生端 ----------
   if (m === 'GET' && p === '/student/basic_information') {

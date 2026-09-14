@@ -538,7 +538,6 @@ const splitSentences = async () => {
       // 后端提交成功后会删除 Redis 中的待确认 session，本地必须同步清空，
       // 否则再次录音会复用已失效的 sessionId 并返回 400。
       sessionId.value = null
-      toast.push('本次评测已保存', 'success')
     } catch (error) {
       const message = error instanceof Error ? error.message : '提交失败，请稍后重试'
       toast.push(message, 'error')

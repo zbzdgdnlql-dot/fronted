@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { AlertCircle, ArrowLeft, ChevronLeft, ChevronRight, CheckCircle2, Loader2, Mic, RotateCcw, Send, Square } from 'lucide-vue-next'
+import { AlertCircle, ArrowLeft, CheckCircle2, Loader2, Mic, Send, Square } from 'lucide-vue-next'
 import {
   analyzeStudentPronTest,
   createStudentTestSession,
@@ -47,7 +47,6 @@ const submitReq = useAsync<SubmitStudentTestSessionResponse>()
 
 const sessionId = ref<string | null>(null)
 const activeIndex = ref(0)
-const sentencePage = ref(1)
 const results = ref<SentenceResult[]>([])
 const recording = ref(false)
 const analyzing = ref(false)
@@ -135,18 +134,24 @@ const modeText = computed(() => MODE_COPY[taskMode.value])
 const minRecordingMs = computed(() => MIN_RECORDING_MS_BY_MODE[taskMode.value])
 const records = computed(() => recordsReq.data.value?.tasks ?? [])
 const segments = computed(() => taskDetail.value?.segments ?? [])
-const sentencePageSize = 4
+/** 左侧列表数据：保留原始序号，便于定位与自动滚动 */
+const segmentItems = computed(() => segments.value.map((segment, index) => ({ segment, index })))
 const currentSentence = computed(() => segments.value[activeIndex.value] ?? '')
 const completedCount = computed(() => results.value.filter((item) => item.status === 'done').length)
-const pageCount = computed(() => Math.max(1, Math.ceil(segments.value.length / sentencePageSize)))
-const pageStartIndex = computed(() => (sentencePage.value - 1) * sentencePageSize)
-const pageEndIndex = computed(() => Math.min(pageStartIndex.value + sentencePageSize, segments.value.length))
-const pageSegments = computed(() => {
-  return segments.value.slice(pageStartIndex.value, pageEndIndex.value).map((segment, offset) => ({
-    segment,
-    index: pageStartIndex.value + offset,
-  }))
-})
+/** 左侧列表容器与列表项引用，用于随测评进度自动下滚 */
+const sentenceListRef = ref<HTMLElement | null>(null)
+const sentenceItemRefs = ref<HTMLElement[]>([])
+const setSentenceItemRef = (el: unknown, index: number) => {
+  if (el instanceof HTMLElement) sentenceItemRefs.value[index] = el
+}
+const scrollActiveIntoView = async () => {
+  await nextTick()
+  const container = sentenceListRef.value
+  const item = sentenceItemRefs.value[activeIndex.value]
+  if (!container || !item || !container.contains(item)) return
+  const targetTop = item.offsetTop - (container.clientHeight - item.clientHeight) / 2
+  container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
+}
 const progressPercent = computed(() => {
   if (!segments.value.length) return 0
   return Math.round((completedCount.value / segments.value.length) * 100)
@@ -181,6 +186,9 @@ const taskWindowMessage = computed(() => {
   return studentTaskAvailabilityMessages[taskWindowStatus.value]
 })
 const canRecord = computed(() => taskWindowOpen.value && !!currentSentence.value && !recording.value && !analyzing.value && !submitReq.loading.value)
+/** 已完成测评的当前项，主按钮改为重录 */
+const currentDone = computed(() => results.value[activeIndex.value]?.status === 'done')
+const recordButtonLabel = computed(() => (currentDone.value ? modeText.value.rerecordLabel : '开始录音'))
 const recordingStartedAt = ref<number | null>(null)
 const recordingElapsedMs = ref(0)
 const canStopRecording = computed(() => recording.value && recordingElapsedMs.value >= minRecordingMs.value)
@@ -276,7 +284,6 @@ const blankResult = (): SentenceResult => ({
 const syncResults = () => {
   results.value = segments.value.map((_, index) => results.value[index] ?? blankResult())
   if (activeIndex.value >= segments.value.length) activeIndex.value = Math.max(segments.value.length - 1, 0)
-  if (sentencePage.value > pageCount.value) sentencePage.value = pageCount.value
 }
 
 /** 从评测结果中取总分；评测失败（分数为 null）时返回 null 而不是 0 分 */
@@ -382,16 +389,6 @@ const ensureSession = async () => {
 const selectSentence = (index: number) => {
   if (recording.value || analyzing.value) return
   activeIndex.value = index
-}
-
-const changeSentencePage = (page: number) => {
-  if (recording.value || analyzing.value) return
-  const nextPage = Math.min(Math.max(page, 1), pageCount.value)
-  sentencePage.value = nextPage
-  const firstIndex = (nextPage - 1) * sentencePageSize
-  if (activeIndex.value < firstIndex || activeIndex.value >= firstIndex + sentencePageSize) {
-    activeIndex.value = Math.min(firstIndex, Math.max(segments.value.length - 1, 0))
-  }
 }
 
 const setCurrentResult = (patch: Partial<SentenceResult>) => {
@@ -553,16 +550,15 @@ const submitSession = async () => {
 
 watch(segments, syncResults)
 
-watch(activeIndex, (index) => {
-  const nextPage = Math.floor(index / sentencePageSize) + 1
-  if (nextPage !== sentencePage.value) sentencePage.value = nextPage
-})
+// 当前录音进度变化时，左侧列表自动滚动到对应条目
+watch(activeIndex, scrollActiveIntoView)
 
 onMounted(async () => {
   window.addEventListener('beforeunload', beforeUnloadHandler)
   try {
     await loadTask()
     syncResults()
+    await scrollActiveIntoView()
   } catch {
     toast.push('获取任务详情失败', 'error')
   }
@@ -704,41 +700,18 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
 
       <div class="grid grid-cols-1 xl:grid-cols-12 gap-8">
         <section class="xl:col-span-5 bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div class="flex flex-col gap-1">
-            <h3 class="text-xl font-black text-gray-900">{{ modeText.panelTitle }}</h3>
-            <p class="text-sm font-bold text-gray-400">
-              第 {{ segments.length ? pageStartIndex + 1 : 0 }}-{{ pageEndIndex }} {{ modeText.unit }}，共 {{ segments.length }} 个{{ modeText.noun }}
-            </p>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              class="w-10 h-10 rounded-2xl border border-gray-100 bg-white flex items-center justify-center text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              :disabled="sentencePage <= 1 || recording || analyzing"
-              @click="changeSentencePage(sentencePage - 1)"
-            >
-              <ChevronLeft class="w-5 h-5" />
-            </button>
-            <span class="rounded-2xl bg-[#F8F9FA] border border-gray-100 px-4 py-2 text-sm font-black text-gray-700">
-              {{ sentencePage }} / {{ pageCount }}
-            </span>
-            <button
-              type="button"
-              class="w-10 h-10 rounded-2xl border border-gray-100 bg-white flex items-center justify-center text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              :disabled="sentencePage >= pageCount || recording || analyzing"
-              @click="changeSentencePage(sentencePage + 1)"
-            >
-              <ChevronRight class="w-5 h-5" />
-            </button>
-          </div>
+        <div class="flex flex-col gap-1">
+          <h3 class="text-xl font-black text-gray-900">{{ modeText.panelTitle }}</h3>
+          <p class="text-sm font-bold text-gray-400">
+            共 {{ segments.length }} 个{{ modeText.noun }}，点击可切换当前{{ modeText.unit }}
+          </p>
         </div>
 
-        <div class="grid grid-cols-1 gap-4">
+        <div ref="sentenceListRef" class="relative flex flex-col gap-4 max-h-[560px] overflow-y-auto pr-1">
           <button
-            v-for="item in pageSegments"
+            v-for="item in segmentItems"
             :key="`${item.index}-${item.segment}`"
+            :ref="(el) => setSentenceItemRef(el, item.index)"
             type="button"
             class="min-h-36 rounded-3xl border p-5 text-left transition-all flex flex-col justify-between gap-4"
             :class="activeIndex === item.index ? 'border-[#70C125] bg-[#F8FAFB] shadow-sm' : 'border-gray-100 bg-white hover:bg-gray-50'"
@@ -806,7 +779,7 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
               @click="startRecording"
             >
               <Mic class="w-5 h-5" />
-              开始录音
+              {{ recordButtonLabel }}
             </button>
             <button
               type="button"
@@ -816,15 +789,6 @@ function beforeUnloadHandler(event: BeforeUnloadEvent) {
             >
               <Square class="w-5 h-5" />
               {{ stopRecordingLabel }}
-            </button>
-            <button
-              type="button"
-              class="rounded-2xl bg-white border border-gray-100 px-5 py-4 text-sm font-black text-gray-700 flex items-center gap-2 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              :disabled="recording || analyzing"
-              @click="setCurrentResult(blankResult())"
-            >
-              <RotateCcw class="w-5 h-5" />
-              {{ modeText.rerecordLabel }}
             </button>
           </div>
 

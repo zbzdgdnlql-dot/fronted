@@ -1,30 +1,31 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { CalendarDays, CheckCircle2, GraduationCap, Hash, History, Layers3 } from 'lucide-vue-next'
-import avatarUrl from '../../assets/figma/avatar.png'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { CalendarDays, CheckCircle2, Construction, GraduationCap, Hash, Layers3, Loader2, Save } from 'lucide-vue-next'
 import ErrorState from '../../components/ErrorState.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import {
+  editUserInfo,
   getStudentArchiveStatistics,
-  getStudentHistoryWords,
   getUserDetail,
+  type EditUserInfoPayload,
   type StudentArchiveStatistics,
   type UserDetail,
 } from '../../api/endpoints'
+import { isApiError } from '../../api/errors'
 import { useAsync } from '../../composables/useAsync'
+import { useToast } from '../../composables/useToast'
 import { useAuth } from '../../stores/auth'
 import router from '../../router'
 
 const auth = useAuth()
+const toast = useToast()
 const userReq = useAsync<Awaited<ReturnType<typeof getUserDetail>>>()
 const archiveReq = useAsync<Awaited<ReturnType<typeof getStudentArchiveStatistics>>>()
-const wordsReq = useAsync<Awaited<ReturnType<typeof getStudentHistoryWords>>>()
 
 const session = computed(() => auth.session.value)
 const userDetail = computed<UserDetail | undefined>(() => userReq.data.value?.data)
 const archive = computed<StudentArchiveStatistics | undefined>(() => archiveReq.data.value?.statistics)
-const words = computed(() => wordsReq.data.value?.words ?? [])
 const classes = computed(() =>
   (userDetail.value?.classes ?? []).map((item) => ({
     id: item.class_id,
@@ -41,12 +42,11 @@ const currentClass = computed(() => {
     ?? auth.session.value?.class_context?.class_name
     ?? '未选择班级'
 })
-const avatarSrc = computed(() => userDetail.value?.avatar_url || avatarUrl)
 const schoolName = computed(() => userDetail.value?.school?.school_name ?? '暂无学校信息')
-const genderLabel = computed(() => {
-  if (userDetail.value?.gender === true) return '男'
-  if (userDetail.value?.gender === false) return '女'
-  return '未填写'
+const isActiveLabel = computed(() => {
+  if (userDetail.value?.is_active === true) return '已启用'
+  if (userDetail.value?.is_active === false) return '已停用'
+  return '状态未知'
 })
 
 const formatDate = (value: string | null | undefined) => {
@@ -68,16 +68,59 @@ const statCards = computed(() => [
   },
 ])
 
+// 资料表单：默认留空，由用户自行填写后保存
+const form = reactive({
+  gender: '' as '' | 'true' | 'false',
+  email: '',
+  phone: '',
+})
+const saving = ref(false)
+
+/** 服务端数据变化时同步表单，未填写的字段保持空白 */
+const syncForm = () => {
+  const detail = userDetail.value
+  form.gender = detail?.gender === true ? 'true' : detail?.gender === false ? 'false' : ''
+  form.email = detail?.email ?? ''
+  form.phone = detail?.phone ?? ''
+}
+
+const saveForm = async () => {
+  if (saving.value) return
+  saving.value = true
+  try {
+    const payload: EditUserInfoPayload = {
+      email: form.email.trim(),
+      phone: form.phone.trim(),
+    }
+    if (form.gender !== '') payload.gender = form.gender === 'true'
+
+    await editUserInfo(payload)
+
+    try {
+      const res = await getUserDetail()
+      userReq.data.value = res
+    } catch {
+      // 详情刷新失败时保留当前界面，保存结果仍有效
+    }
+    syncForm()
+    toast.push('资料已保存', 'success')
+  } catch (e) {
+    toast.push(isApiError(e) ? e.message : '保存失败，请稍后重试', 'error')
+  } finally {
+    saving.value = false
+  }
+}
+
 const loadAll = async () => {
   await Promise.all([
     userReq.run(() => getUserDetail()),
     archiveReq.run(() => getStudentArchiveStatistics()),
-    wordsReq.run(() => getStudentHistoryWords()),
   ])
+  syncForm()
 }
 
-const hasError = computed(() => userReq.error.value || archiveReq.error.value || wordsReq.error.value)
-const isLoading = computed(() => userReq.loading.value || archiveReq.loading.value || wordsReq.loading.value)
+const hasError = computed(() => userReq.error.value || archiveReq.error.value)
+const isLoading = computed(() => userReq.loading.value || archiveReq.loading.value)
 
 onMounted(() => {
   void loadAll()
@@ -112,27 +155,18 @@ onMounted(() => {
       <aside class="xl:col-span-4 flex flex-col gap-5">
         <!-- User Profile Card -->
         <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
-          <div class="flex flex-col sm:flex-row xl:flex-col gap-5">
-            <SkeletonBlock v-if="userReq.loading.value" class="w-32 h-32 rounded-full" />
-            <img
-              v-else
-              :src="avatarSrc"
-              alt="Avatar"
-              class="w-32 h-32 rounded-full border-4 border-white shadow-md object-cover bg-blue-50"
-            />
-            <div class="flex flex-col gap-3">
-              <div v-if="userReq.loading.value" class="flex flex-col gap-3">
-                <SkeletonBlock class="h-8 w-44" />
-                <SkeletonBlock class="h-5 w-28" />
-              </div>
-              <div v-else>
-                <h3 class="text-2xl font-black text-gray-900 leading-tight">{{ displayName }}</h3>
-                <p class="text-base font-bold text-gray-400">{{ handle }}</p>
-              </div>
-              <span class="w-fit rounded-full bg-[#EAF0DD] px-4 py-1.5 text-xs font-black text-[#70C125]">
-                Student
-              </span>
+          <div class="flex flex-col gap-3">
+            <div v-if="userReq.loading.value" class="flex flex-col gap-3">
+              <SkeletonBlock class="h-8 w-44" />
+              <SkeletonBlock class="h-5 w-28" />
             </div>
+            <div v-else>
+              <h3 class="text-2xl font-black text-gray-900 leading-tight">{{ displayName }}</h3>
+              <p class="text-base font-bold text-gray-400">{{ handle }}</p>
+            </div>
+            <span class="w-fit rounded-full bg-[#EAF0DD] px-4 py-1.5 text-xs font-black text-[#70C125]">
+              Student
+            </span>
           </div>
 
           <div class="h-px bg-gray-100"></div>
@@ -167,30 +201,59 @@ onMounted(() => {
             <SkeletonBlock class="h-12 w-full" />
           </template>
 
-          <div v-else class="flex flex-col gap-3">
+          <form v-else class="flex flex-col gap-3" @submit.prevent="saveForm">
             <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
               <span class="text-xs font-black text-gray-400">学校</span>
               <span class="text-sm font-black text-gray-900">{{ schoolName }}</span>
             </div>
             <div class="grid grid-cols-2 gap-3">
-              <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
+              <label class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
                 <span class="text-xs font-black text-gray-400">性别</span>
-                <span class="text-sm font-black text-gray-900">{{ genderLabel }}</span>
-              </div>
+                <select
+                  v-model="form.gender"
+                  class="bg-transparent text-sm font-black text-gray-900 outline-none"
+                >
+                  <option value="">未填写</option>
+                  <option value="true">男</option>
+                  <option value="false">女</option>
+                </select>
+              </label>
               <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
                 <span class="text-xs font-black text-gray-400">账号状态</span>
-                <span class="text-sm font-black text-gray-900">{{ userDetail?.is_active === true ? '已启用' : userDetail?.is_active === false ? '已停用' : '状态未知' }}</span>
+                <span class="text-sm font-black text-gray-900">{{ isActiveLabel }}</span>
               </div>
             </div>
-            <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
+            <label class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
               <span class="text-xs font-black text-gray-400">邮箱</span>
-              <span class="text-sm font-black text-gray-900 break-all">{{ userDetail?.email ?? '未填写' }}</span>
-            </div>
-            <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
+              <input
+                v-model="form.email"
+                type="email"
+                autocomplete="email"
+                placeholder="请输入邮箱"
+                class="bg-transparent text-sm font-black text-gray-900 outline-none placeholder:text-gray-400 placeholder:font-bold"
+              />
+            </label>
+            <label class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
               <span class="text-xs font-black text-gray-400">手机号</span>
-              <span class="text-sm font-black text-gray-900">{{ userDetail?.phone ?? '未填写' }}</span>
-            </div>
-          </div>
+              <input
+                v-model="form.phone"
+                type="tel"
+                autocomplete="tel"
+                placeholder="请输入手机号"
+                class="bg-transparent text-sm font-black text-gray-900 outline-none placeholder:text-gray-400 placeholder:font-bold"
+              />
+            </label>
+
+            <button
+              type="submit"
+              :disabled="saving || userReq.loading.value"
+              class="mt-1 inline-flex items-center justify-center gap-2 bg-[#70C125] text-white px-5 py-3 rounded-2xl font-black text-sm hover:bg-[#63ad20] border-b-4 border-[#5E9E1A] active:border-b-0 active:translate-y-1 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <Loader2 v-if="saving" class="w-4 h-4 animate-spin" />
+              <Save v-else class="w-4 h-4" />
+              保存
+            </button>
+          </form>
         </section>
 
         <!-- Classes -->
@@ -248,62 +311,18 @@ onMounted(() => {
           </article>
         </div>
 
-        <!-- History Words -->
-        <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
-          <div class="flex items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-              <History class="w-5 h-5 text-gray-400" />
-              <h3 class="text-lg font-black text-gray-900">历史单词</h3>
-            </div>
-            <span class="rounded-full bg-[#EAF0DD] px-4 py-1.5 text-xs font-black text-[#70C125]">{{ words.length }} 个</span>
-          </div>
-
-          <template v-if="wordsReq.loading.value">
-            <SkeletonBlock class="h-10 w-full" />
-            <SkeletonBlock class="h-10 w-3/4" />
-          </template>
-
-          <EmptyState
-            v-else-if="!words.length"
-            title="暂无历史单词"
-            description="完成评测后，单词将出现在这里。"
-          />
-
-          <div v-else class="flex flex-wrap gap-3">
-            <span
-              v-for="word in words.slice(0, 24)"
-              :key="word"
-              class="rounded-2xl border border-gray-100 bg-[#F8F9FA] px-4 py-2 text-sm font-black text-gray-700"
-            >
-              {{ word }}
-            </span>
-          </div>
-        </section>
-
         <!-- Activity Overview -->
         <section class="bg-white border border-gray-100 rounded-[24px] p-6 shadow-sm flex flex-col gap-5">
           <div class="flex items-center justify-between gap-4">
             <h3 class="text-lg font-black text-gray-900">活跃概览</h3>
-            <span class="text-xs font-black text-gray-400">评测活动</span>
+            <span class="px-2 py-1 rounded-full bg-[#E5E7EB] text-[10px] font-black text-[#6B7280]">
+              开发中
+            </span>
           </div>
 
-          <div class="grid grid-cols-7 gap-2 max-w-[420px]">
-            <div
-              v-for="cell in Array.from({ length: 35 }, (_, i) => i)"
-              :key="cell"
-              class="aspect-square rounded-md border border-white"
-              :class="archive?.total_entries ? 'bg-[#DCEFCC]' : 'bg-gray-100'"
-            ></div>
-          </div>
-
-          <div class="flex items-center gap-2 text-xs font-bold text-gray-400">
-            <span>少</span>
-            <span class="w-3 h-3 rounded-sm bg-gray-100"></span>
-            <span class="w-3 h-3 rounded-sm bg-[#DCEFCC]"></span>
-            <span class="w-3 h-3 rounded-sm bg-[#BEE994]"></span>
-            <span class="w-3 h-3 rounded-sm bg-[#8FD64B]"></span>
-            <span class="w-3 h-3 rounded-sm bg-[#70C125]"></span>
-            <span>多</span>
+          <div class="rounded-2xl border border-dashed border-gray-200 bg-[#F8F9FA] py-10 flex flex-col items-center justify-center gap-2">
+            <Construction class="w-6 h-6 text-gray-300" />
+            <span class="text-sm font-black text-gray-400">该功能开发中，敬请期待</span>
           </div>
         </section>
       </section>

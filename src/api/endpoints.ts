@@ -208,12 +208,15 @@ export type StudentTaskAttemptStat = {
   count: number
   /** 最后一次提交的时间戳（毫秒），无提交为 0 */
   lastSubmittedAt: number
+  /** 是否有教师已下发评语（session 级 teacher_notes 非空） */
+  teacherReviewed: boolean
 }
 
 /**
  * `student/tasks` 不返回提交次数，这里按任务并发补齐。
  * 刻意复用 `student/task`（提交记录）而不是 `student/task/attempt_count`：
  * 前者只统计已完成提交，与档案页右侧「共 N 次提交」完全同源，不会出现两侧不一致。
+ * 同时复用记录里的 `teacher_notes` 判断教师是否已批改。
  */
 export async function getStudentTaskAttemptStats(
   taskIds: Array<string | number>,
@@ -226,10 +229,11 @@ export async function getStudentTaskAttemptStats(
         const time = new Date(record.completed_at || record.created_at).getTime()
         return Number.isFinite(time) && time > latest ? time : latest
       }, 0)
-      return { count: records.length, lastSubmittedAt }
+      const teacherReviewed = records.some((record) => Boolean(record.teacher_notes?.trim()))
+      return { count: records.length, lastSubmittedAt, teacherReviewed }
     } catch {
       // 单个任务取数失败不应让整个档案页崩掉，按 0 次展示
-      return { count: 0, lastSubmittedAt: 0 }
+      return { count: 0, lastSubmittedAt: 0, teacherReviewed: false }
     }
   })
 }
@@ -537,6 +541,20 @@ export type UserDetail = {
 
 export async function getUserDetail() {
   return request<{ ok: boolean; data: UserDetail }>('auth/users/user_detail', { method: 'GET' })
+}
+
+export type EditUserInfoPayload = {
+  username?: string | null
+  gender?: boolean | null
+  email?: string | null
+  phone?: string | null
+}
+
+export async function editUserInfo(payload: EditUserInfoPayload) {
+  return request<{ ok: boolean }>('auth/users/edit_user_info', {
+    method: 'POST',
+    body: payload,
+  })
 }
 
 export type CreateStudentTestSessionResponse = {

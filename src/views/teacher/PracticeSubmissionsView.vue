@@ -15,6 +15,7 @@ import {
 } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
 import { useToast } from '../../composables/useToast'
+import { matchSentenceWords } from '../../utils/sentenceWords'
 import ErrorState from '../../components/ErrorState.vue'
 import ScoreRadarChart from '../../components/ScoreRadarChart.vue'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
@@ -101,6 +102,18 @@ const scoreColor = (value: number) => {
   return 'text-red-600'
 }
 
+/** 逐词下划线档位：与档案页保持一致（≥80 绿 / 60-79 黄 / <60 红） */
+const underlineColor = (value: number) => {
+  if (value >= 80) return 'bg-[#58CC02]'
+  if (value >= 60) return 'bg-[#FFC107]'
+  return 'bg-[#FF6B6B]'
+}
+
+// 分数统一保留两位小数展示
+const formatScore = (value: number | null | undefined) => (
+  value == null || !Number.isFinite(Number(value)) ? '--' : Number(value).toFixed(2)
+)
+
 const activeSentenceRadarItems = computed(() => {
   const sentence = activeSentence.value
   if (!sentence) return []
@@ -111,6 +124,21 @@ const activeSentenceRadarItems = computed(() => {
   ]
 })
 const activeSentenceWords = computed(() => activeSentence.value?.words ?? [])
+
+// 后端词列表不含标点，按原句把标点补回词尾；同时保留下标以便浮层回取原始词数据
+const activeSentenceWordDisplays = computed(() => {
+  const words = activeSentenceWords.value
+  const layout = matchSentenceWords(activeSentence.value?.text, words.map((word) => word.word))
+  return {
+    prefix: layout.prefix,
+    items: layout.words.map((matched) => ({
+      index: matched.index,
+      text: matched.value,
+      suffix: matched.suffix,
+      word: words[matched.index],
+    })),
+  }
+})
 
 const stats = computed(() => {
   const scored = flatSessions.value.filter((session) => session.score != null)
@@ -324,6 +352,58 @@ const playWordAudio = async (word: WordScoreItem) => {
   }
 }
 
+// ---- 单词悬停浮层：fixed + Teleport 到 body，避免被容器 overflow 裁切 ----
+const hoveredWord = ref<WordScoreItem | null>(null)
+const tooltipStyle = ref<Record<string, string>>({})
+// 鼠标从单词移到浮层上时不该立刻收起，留一小段缓冲时间
+let hideTooltipTimer: number | null = null
+
+const cancelHideTooltip = () => {
+  if (hideTooltipTimer !== null) {
+    window.clearTimeout(hideTooltipTimer)
+    hideTooltipTimer = null
+  }
+}
+
+const scheduleHideTooltip = () => {
+  cancelHideTooltip()
+  hideTooltipTimer = window.setTimeout(() => {
+    hoveredWord.value = null
+    hideTooltipTimer = null
+  }, 180)
+}
+
+const showWordTooltip = (word: WordScoreItem, event: MouseEvent) => {
+  const el = event.currentTarget as HTMLElement | null
+  if (!el) return
+  cancelHideTooltip()
+  const rect = el.getBoundingClientRect()
+  const width = 230
+  const left = Math.min(Math.max(rect.left + rect.width / 2 - width / 2, 8), window.innerWidth - width - 8)
+  const above = rect.top > 240
+  hoveredWord.value = word
+  tooltipStyle.value = {
+    left: `${left}px`,
+    top: above ? `${rect.top - 10}px` : `${rect.bottom + 10}px`,
+    width: `${width}px`,
+    transform: above ? 'translateY(-100%)' : 'none',
+  }
+}
+
+const hideWordTooltip = () => {
+  cancelHideTooltip()
+  hoveredWord.value = null
+}
+
+// 滚动时浮层位置会错位，直接收起
+const onAnyScroll = () => hideWordTooltip()
+
+// 切句后浮层与词级试听都失去意义，一并收起
+watch(activeSentence, () => {
+  hideWordTooltip()
+  releaseWordAudio()
+})
+
 const updateQuery = () => {
   void router.replace({
     path: '/teacher/submissions',
@@ -416,7 +496,7 @@ const mapDetails = (details: StudentSessionEvaluationItem[]) => {
     id: item.eval_id,
     audioFileId: item.audio_file_id ?? null,
     text: item.sentence_text,
-    score: Math.round(item.total_score),
+    score: Number(Number(item.total_score ?? 0).toFixed(2)),
     pronunciation: Number(item.pronunciation) || 0,
     rhythm: Number(item.rhythm) || 0,
     fluency: Number(item.fluency) || 0,
@@ -509,10 +589,14 @@ watch(selectedSessionId, async () => {
 })
 
 onMounted(() => {
+  window.addEventListener('scroll', onAnyScroll, true)
   void load()
 })
 
-onBeforeUnmount(cleanupAudio)
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', onAnyScroll, true)
+  cleanupAudio()
+})
 </script>
 
 <template>
@@ -635,7 +719,7 @@ onBeforeUnmount(cleanupAudio)
                     <div class="flex items-center justify-between gap-3">
                       <span class="text-xs font-black text-[#1F2937] truncate">{{ session.displayName }}</span>
                       <span class="text-sm font-black" :class="session.score != null ? 'text-[#356B00]' : 'text-[#9CA3AF]'">
-                        {{ session.score ?? '未评分' }}
+                        {{ session.score != null ? formatScore(session.score) : '未评分' }}
                       </span>
                     </div>
                     <p class="text-xs font-bold text-[#9CA3AF] mt-1">{{ formatDate(session.completedAt) }}</p>
@@ -663,7 +747,7 @@ onBeforeUnmount(cleanupAudio)
           </div>
           <div class="bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-5" style="border-left: 4px solid #BA1A1A;">
             <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">平均分</span>
-            <p class="text-2xl font-black text-[#1F2937] mt-2">{{ stats.avgScore.toFixed(1) }}</p>
+            <p class="text-2xl font-black text-[#1F2937] mt-2">{{ formatScore(stats.avgScore) }}</p>
           </div>
         </div>
 
@@ -736,7 +820,7 @@ onBeforeUnmount(cleanupAudio)
                 :disabled="saveReq.loading.value || !selectedSessionId"
                 @click="submitFeedback"
               >
-                {{ saveReq.loading.value ? '提交中...' : '提交评分' }}
+                {{ saveReq.loading.value ? '提交中...' : '提交评语' }}
               </button>
             </div>
 
@@ -812,7 +896,7 @@ onBeforeUnmount(cleanupAudio)
                 <span class="text-sm font-black text-[#9CA3AF] uppercase tracking-wider">机器评分</span>
                 <div class="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 flex flex-col gap-4">
                   <div class="flex items-end gap-2">
-                    <span class="text-4xl font-black text-[#356B00]">{{ activeSentence.score }}</span>
+                    <span class="text-4xl font-black text-[#356B00]">{{ formatScore(activeSentence.score) }}</span>
                     <span class="pb-1 text-sm font-black text-[#64748B]">/ 100 分</span>
                   </div>
                   <div class="h-2 rounded-full bg-[#E2E8F0] overflow-hidden">
@@ -833,53 +917,24 @@ onBeforeUnmount(cleanupAudio)
                       <div v-if="!activeSentenceWords.length" class="flex-1 rounded-lg bg-[#F8FAFC] p-4 text-xs font-bold text-[#9CA3AF] flex items-center justify-center">
                         暂无单词级明细
                       </div>
-                      <div v-else class="flex flex-col gap-2 max-h-[200px] overflow-y-auto pr-1">
-                        <div
-                          v-for="word in activeSentenceWords"
-                          :key="`${word.word}-${toNumber(word.pronunciation)}`"
-                          class="rounded-lg bg-[#F8FAFC] border border-[#F1F5F9] p-3 flex flex-col gap-1.5"
+                      <!-- 逐词横排：下划线按分数着色，悬停浮层可听该词发音（整句录音切片） -->
+                      <div v-else class="flex flex-wrap items-end gap-x-3 gap-y-3">
+                        <span
+                          v-if="activeSentenceWordDisplays.prefix"
+                          class="pb-2.5 text-lg font-black leading-tight text-[#1F2937]"
                         >
-                          <div class="flex items-center justify-between gap-2">
-                            <div class="flex items-center gap-1.5 min-w-0">
-                              <span class="text-sm font-black text-[#1F2937] truncate">{{ word.word }}</span>
-                              <span v-if="word.error_type && word.error_type !== 'None'" class="rounded-full bg-orange-50 px-2 py-0.5 text-[10px] font-black text-orange-600">
-                                {{ word.error_type }}
-                              </span>
-                            </div>
-                            <div class="flex shrink-0 items-center gap-1.5">
-                              <span class="text-xs font-black tabular-nums" :class="scoreColor(toNumber(word.pronunciation))">
-                                {{ toNumber(word.pronunciation).toFixed(1) }} 分
-                              </span>
-                              <!-- 播放该单词的用户发音：整句录音按 start_ms/duration_ms 切片 -->
-                              <button
-                                type="button"
-                                class="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors disabled:cursor-wait"
-                                :class="
-                                  isWordAudioActive(word)
-                                    ? 'bg-[#58CC02] text-white'
-                                    : 'bg-[#EBF9E6] text-[#356B00] hover:bg-[#DFF5D5]'
-                                "
-                                :title="isWordAudioActive(word) ? '停止播放' : '播放该词发音'"
-                                :disabled="wordAudioLoading && isWordAudioActive(word)"
-                                @click="playWordAudio(word)"
-                              >
-                                <Loader2 v-if="wordAudioLoading && isWordAudioActive(word)" class="h-3.5 w-3.5 animate-spin" />
-                                <Square v-else-if="isWordAudioActive(word)" class="h-3.5 w-3.5" />
-                                <PlayCircle v-else class="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                          <div v-if="word.phonemes?.length" class="flex flex-wrap gap-1.5">
-                            <span
-                              v-for="phoneme in word.phonemes"
-                              :key="`${phoneme.phoneme}-${toNumber(phoneme.pronunciation)}`"
-                              class="rounded bg-white border border-[#E2E8F0] px-1.5 py-0.5 text-[11px] font-bold text-[#64748B]"
-                            >
-                              {{ phoneme.phoneme }}
-                              <span :class="scoreColor(toNumber(phoneme.pronunciation))">{{ toNumber(phoneme.pronunciation).toFixed(1) }}</span>
-                            </span>
-                          </div>
-                        </div>
+                          {{ activeSentenceWordDisplays.prefix }}
+                        </span>
+                        <span
+                          v-for="item in activeSentenceWordDisplays.items"
+                          :key="`${item.index}-${item.text}`"
+                          class="inline-flex cursor-help flex-col items-stretch transition-transform hover:-translate-y-0.5"
+                          @mouseenter="showWordTooltip(item.word, $event)"
+                          @mouseleave="scheduleHideTooltip"
+                        >
+                          <span class="px-0.5 text-lg font-black leading-tight text-[#1F2937]">{{ item.text }}{{ item.suffix }}</span>
+                          <span class="mt-1 h-1.5 w-full rounded-full" :class="underlineColor(toNumber(item.word.pronunciation))"></span>
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -904,4 +959,64 @@ onBeforeUnmount(cleanupAudio)
       </section>
     </div>
   </div>
+
+  <!-- 单词得分浮层：fixed 定位并挂到 body，避免被容器裁切 -->
+  <Teleport to="body">
+    <div
+      v-if="hoveredWord"
+      class="fixed z-[60] rounded-xl border border-[#E8ECF2] bg-white/95 px-3 py-2.5 text-[#1F2937] shadow-[0_12px_32px_rgba(15,23,42,0.14)] backdrop-blur-sm"
+      :style="tooltipStyle"
+      @mouseenter="cancelHideTooltip"
+      @mouseleave="scheduleHideTooltip"
+    >
+      <div class="flex items-center gap-1.5">
+        <span class="truncate text-sm font-black tracking-tight">{{ hoveredWord.word }}</span>
+        <!-- 播放该单词的用户发音：整句录音按 start_ms/duration_ms 切片 -->
+        <button
+          type="button"
+          class="ml-auto flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors disabled:cursor-wait"
+          :class="
+            isWordAudioActive(hoveredWord)
+              ? 'bg-[#58CC02] text-white'
+              : 'bg-[#EBF9E6] text-[#356B00] hover:bg-[#DFF5D5]'
+          "
+          :title="isWordAudioActive(hoveredWord) ? '停止播放' : '播放该词发音'"
+          :disabled="wordAudioLoading && isWordAudioActive(hoveredWord)"
+          @click="playWordAudio(hoveredWord)"
+        >
+          <Loader2 v-if="wordAudioLoading && isWordAudioActive(hoveredWord)" class="h-3.5 w-3.5 animate-spin" />
+          <Square v-else-if="isWordAudioActive(hoveredWord)" class="h-3.5 w-3.5" />
+          <PlayCircle v-else class="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div class="mt-1.5 flex items-center gap-1.5">
+        <span class="text-[11px] font-bold text-[#9CA3AF]">单词得分</span>
+        <span class="text-sm font-black tabular-nums" :class="scoreColor(toNumber(hoveredWord.pronunciation))">
+          {{ toNumber(hoveredWord.pronunciation).toFixed(1) }}
+        </span>
+        <span
+          v-if="hoveredWord.error_type && hoveredWord.error_type !== 'None'"
+          class="ml-auto rounded-full bg-orange-50 px-1.5 py-0.5 text-[10px] font-black text-orange-600"
+        >
+          {{ hoveredWord.error_type }}
+        </span>
+      </div>
+      <div v-if="hoveredWord.phonemes?.length" class="mt-2 border-t border-[#F1F5F9] pt-2">
+        <div class="mb-1.5 text-[10px] font-black tracking-wider text-[#9CA3AF]">音素得分</div>
+        <div class="flex flex-wrap gap-1">
+          <span
+            v-for="(phoneme, pi) in hoveredWord.phonemes"
+            :key="`${phoneme.phoneme}-${pi}`"
+            class="rounded-md border border-[#EEF2F7] bg-[#F8FAFC] px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-[#64748B]"
+          >
+            {{ phoneme.phoneme }}
+            <span class="font-black" :class="scoreColor(toNumber(phoneme.pronunciation))">
+              {{ toNumber(phoneme.pronunciation).toFixed(1) }}
+            </span>
+          </span>
+        </div>
+      </div>
+      <div v-else class="mt-2 border-t border-[#F1F5F9] pt-2 text-[10px] font-bold text-[#9CA3AF]">暂无音素级明细</div>
+    </div>
+  </Teleport>
 </template>

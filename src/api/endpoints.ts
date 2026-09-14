@@ -203,6 +203,37 @@ export async function getStudentTaskRecords(taskId: string | number) {
   })
 }
 
+export type StudentTaskAttemptStat = {
+  /** 已完成提交次数（与右侧「共 N 次提交」同源） */
+  count: number
+  /** 最后一次提交的时间戳（毫秒），无提交为 0 */
+  lastSubmittedAt: number
+}
+
+/**
+ * `student/tasks` 不返回提交次数，这里按任务并发补齐。
+ * 刻意复用 `student/task`（提交记录）而不是 `student/task/attempt_count`：
+ * 前者只统计已完成提交，与档案页右侧「共 N 次提交」完全同源，不会出现两侧不一致。
+ */
+export async function getStudentTaskAttemptStats(
+  taskIds: Array<string | number>,
+): Promise<StudentTaskAttemptStat[]> {
+  return mapWithConcurrency(taskIds, HISTORY_TASK_CONCURRENCY, async (taskId) => {
+    try {
+      const res = await getStudentTaskRecords(taskId)
+      const records = res?.tasks ?? []
+      const lastSubmittedAt = records.reduce((latest, record) => {
+        const time = new Date(record.completed_at || record.created_at).getTime()
+        return Number.isFinite(time) && time > latest ? time : latest
+      }, 0)
+      return { count: records.length, lastSubmittedAt }
+    } catch {
+      // 单个任务取数失败不应让整个档案页崩掉，按 0 次展示
+      return { count: 0, lastSubmittedAt: 0 }
+    }
+  })
+}
+
 export type PhonemeScoreItem = {
   phoneme: string
   pronunciation: number
@@ -219,9 +250,9 @@ export type WordScoreItem = {
   pronunciation: number
   overall?: number | null
   error_type?: string
-  /** 该词在整句用户录音中的起始时间（毫秒） */
+  /** 该词在整句用户录音中的起始时间（后端原样下发 Azure 的 Offset，单位 ticks，1ms = 10000 ticks） */
   start_ms?: number | null
-  /** 该词在整句用户录音中的持续时长（毫秒） */
+  /** 该词在整句用户录音中的持续时长（后端原样下发 Azure 的 Duration，单位 ticks，1ms = 10000 ticks） */
   duration_ms?: number | null
   phonemes?: PhonemeScoreItem[]
   syllables?: SyllableScoreItem[]
@@ -266,10 +297,6 @@ export async function getStudentHistoryWords() {
   return request<{ success: boolean; words: string[] }>('student/history/words', { method: 'GET' })
 }
 
-export async function getStudentHistoryPhonemes() {
-  return request<{ success: boolean; phonemes: string[] }>('student/history/phonemes', { method: 'GET' })
-}
-
 export type HistoryRankingItem = {
   word?: string
   phoneme?: string
@@ -283,10 +310,6 @@ export type HistoryRanking = {
   worst_phonemes: HistoryRankingItem[]
 }
 
-export async function getStudentHistoryRanking() {
-  return request<HistoryRanking>('student/history/ranking', { method: 'GET' })
-}
-
 export type HistoryWordDetail = {
   word: string
   average_score: number
@@ -294,10 +317,6 @@ export type HistoryWordDetail = {
   min_score: number
   count: number
   scores: Array<{ score: number; date: string }>
-}
-
-export async function getStudentHistoryWordDetail(word: string) {
-  return request<HistoryWordDetail>(`student/history/word/${encodeURIComponent(word)}`, { method: 'GET' })
 }
 
 export type HistoryPhonemeDetail = {
@@ -309,8 +328,183 @@ export type HistoryPhonemeDetail = {
   scores: Array<{ score: number; date: string }>
 }
 
-export async function getStudentHistoryPhonemeDetail(phoneme: string) {
-  return request<HistoryPhonemeDetail>(`student/history/phoneme/${encodeURIComponent(phoneme)}`, { method: 'GET' })
+/**
+ * 当前后端只注册了 /student/history/words、/studentword/history、/studentphoneme/history
+ * 与 /student/task/problem_areas，没有 history/phonemes、history/ranking、
+ * history/word/{word}、history/phoneme/{phoneme}。
+ *
+ * 这里改为复用现存的 tasks → task → session 三级接口，在前端聚合出等价数据：
+ * - 单词/音素列表与排名：来自各次评测明细中的 words[].pronunciation 与 words[].phonemes[].pronunciation
+ * - 单词/音素趋势明细：同上，按 created_at 升序排列
+ */
+type HistorySample = { score: number; date: string }
+
+type StudentHistoryAggregate = {
+  words: string[]
+  phonemes: string[]
+  wordSamples: Map<string, HistorySample[]>
+  phonemeSamples: Map<string, HistorySample[]>
+}
+
+const HISTORY_TASK_CONCURRENCY = 4
+const HISTORY_SESSION_CONCURRENCY = 6
+const HISTORY_RANKING_TOP_K = 5
+
+let studentHistoryAggregatePromise: Promise<StudentHistoryAggregate> | null = null
+
+/** 清空聚合缓存，用于「更新数据」等需要强制重新拉取的场景 */
+export function invalidateStudentHistoryAggregate() {
+  studentHistoryAggregatePromise = null
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++
+      results[index] = await worker(items[index])
+    }
+  })
+  await Promise.all(runners)
+  return results
+}
+
+function pushSample(map: Map<string, HistorySample[]>, key: string, sample: HistorySample) {
+  const list = map.get(key)
+  if (list) list.push(sample)
+  else map.set(key, [sample])
+}
+
+async function buildStudentHistoryAggregate(): Promise<StudentHistoryAggregate> {
+  const tasksRes = await getStudentTasks()
+  // avg_score 为 -1 表示该任务没有任何提交，跳过可省去大量空请求
+  const tasks = (tasksRes?.data ?? []).filter((task) => Number(task.avg_score) >= 0)
+
+  const recordsPerTask = await mapWithConcurrency(tasks, HISTORY_TASK_CONCURRENCY, async (task) => {
+    try {
+      const res = await getStudentTaskRecords(task.task_id)
+      return res?.tasks ?? []
+    } catch {
+      return []
+    }
+  })
+
+  const sessionIds = Array.from(
+    new Set(recordsPerTask.flat().map((record) => record.session_id).filter(Boolean)),
+  )
+
+  const detailsPerSession = await mapWithConcurrency(
+    sessionIds,
+    HISTORY_SESSION_CONCURRENCY,
+    async (sessionId) => {
+      try {
+        const res = await getStudentSessionDetails(sessionId)
+        return res?.details ?? []
+      } catch {
+        return []
+      }
+    },
+  )
+
+  const wordSamples = new Map<string, HistorySample[]>()
+  const phonemeSamples = new Map<string, HistorySample[]>()
+
+  for (const detail of detailsPerSession.flat()) {
+    const date = detail.created_at
+    for (const word of detail.words ?? []) {
+      const wordScore = Number(word?.pronunciation)
+      if (word?.word && Number.isFinite(wordScore)) {
+        pushSample(wordSamples, word.word, { score: wordScore, date })
+      }
+      for (const phoneme of word?.phonemes ?? []) {
+        const phonemeScore = Number(phoneme?.pronunciation)
+        if (phoneme?.phoneme && Number.isFinite(phonemeScore)) {
+          pushSample(phonemeSamples, phoneme.phoneme, { score: phonemeScore, date })
+        }
+      }
+    }
+  }
+
+  return {
+    words: Array.from(wordSamples.keys()).sort((a, b) => a.localeCompare(b)),
+    phonemes: Array.from(phonemeSamples.keys()).sort((a, b) => a.localeCompare(b)),
+    wordSamples,
+    phonemeSamples,
+  }
+}
+
+async function getStudentHistoryAggregate(force = false): Promise<StudentHistoryAggregate> {
+  if (force || !studentHistoryAggregatePromise) {
+    studentHistoryAggregatePromise = buildStudentHistoryAggregate().catch((err) => {
+      studentHistoryAggregatePromise = null
+      throw err
+    })
+  }
+  return studentHistoryAggregatePromise
+}
+
+function averageSamples(samples: HistorySample[]) {
+  return samples.reduce((sum, sample) => sum + sample.score, 0) / samples.length
+}
+
+function buildRanking(
+  samples: Map<string, HistorySample[]>,
+  key: 'word' | 'phoneme',
+): { best: HistoryRankingItem[]; worst: HistoryRankingItem[] } {
+  const items: HistoryRankingItem[] = []
+  samples.forEach((list, name) => {
+    if (!list.length) return
+    items.push({ [key]: name, score: averageSamples(list) })
+  })
+  const best = [...items].sort((a, b) => b.score - a.score).slice(0, HISTORY_RANKING_TOP_K)
+  const worst = [...items].sort((a, b) => a.score - b.score).slice(0, HISTORY_RANKING_TOP_K)
+  return { best, worst }
+}
+
+function buildDetail(name: string, samples: Map<string, HistorySample[]>) {
+  const scores = [...(samples.get(name) ?? [])].sort((a, b) =>
+    String(a.date).localeCompare(String(b.date)),
+  )
+  const values = scores.map((item) => item.score)
+  return {
+    average_score: values.length ? averageSamples(scores) : 0,
+    max_score: values.length ? Math.max(...values) : 0,
+    min_score: values.length ? Math.min(...values) : 0,
+    count: values.length,
+    scores,
+  }
+}
+
+export async function getStudentHistoryPhonemes(): Promise<{ success: boolean; phonemes: string[] }> {
+  const aggregate = await getStudentHistoryAggregate()
+  return { success: true, phonemes: aggregate.phonemes }
+}
+
+export async function getStudentHistoryRanking(force = false): Promise<HistoryRanking> {
+  const aggregate = await getStudentHistoryAggregate(force)
+  const words = buildRanking(aggregate.wordSamples, 'word')
+  const phonemes = buildRanking(aggregate.phonemeSamples, 'phoneme')
+  return {
+    best_words: words.best,
+    worst_words: words.worst,
+    best_phonemes: phonemes.best,
+    worst_phonemes: phonemes.worst,
+  }
+}
+
+export async function getStudentHistoryWordDetail(word: string): Promise<HistoryWordDetail> {
+  const aggregate = await getStudentHistoryAggregate()
+  return { word, ...buildDetail(word, aggregate.wordSamples) }
+}
+
+export async function getStudentHistoryPhonemeDetail(phoneme: string): Promise<HistoryPhonemeDetail> {
+  const aggregate = await getStudentHistoryAggregate()
+  return { phoneme, ...buildDetail(phoneme, aggregate.phonemeSamples) }
 }
 
 export type UserDetailClass = {
@@ -443,22 +637,23 @@ export async function analyzeStudentPronTest(params: StudentPronTestAnalyzeParam
   }>('student/pron-test/analyze', { method: 'POST', body: fd, timeoutMs: 60_000 })
 }
 
-// 取回参考音频：main_page session 的逐句音频由 create_session 时合成并落盘，
-// task session 则由教师端模板生成，统一从 STDAudioFile 读取。
-export async function getSentenceStdAudio(taskSessionId: string, sentenceSeq: number) {
+// 取回参考音频：main_page session 的逐句音频在 create_session 时按 session_id 落盘，
+// task 模式的音频由教师端模板按 task_id 落盘；后端以「是否含下划线」区分两者，
+// 因此任务场景必须传 task_id（形如 2004_20260914_001），否则会落到 session 分支导致 500。
+export async function getSentenceStdAudio(taskOrSessionId: string, sentenceSeq: number) {
   return requestBlob('student/task/sentence_stdaudio', {
     method: 'POST',
-    body: { task_session_id: taskSessionId, sentence_seq: sentenceSeq },
+    body: { task_session_id: taskOrSessionId, sentence_seq: sentenceSeq },
     timeoutMs: 30_000,
   })
 }
 
-// 取回学生自己某一句的作答录音：学生端暂无独立路由，
-// 复用教师端按 evaluation_id 取音频的同一接口（学生 eval_id 与 evaluation_id 同源）。
+// 取回学生自己某一句的作答录音：后端已提供学生端专用路由，
+// 按 evaluation_id 取音频，并在服务端校验该录音归属当前学生。
 export async function getStudentEvaluationAudio(evaluationId: string) {
-  return requestBlob('teacher/evaluation/audio', {
-    method: 'GET',
-    query: { evaluation_id: evaluationId },
+  return requestBlob('student/evaluation/audio', {
+    method: 'POST',
+    body: { evaluation_id: evaluationId },
   })
 }
 
@@ -629,6 +824,7 @@ export async function createTeacherContent(params: {
 
 export async function publishTeacherTask(params: {
   classIds: string[]
+  /** 任务标题：给学生看的标题，同一个模板每次布置可单独设置 */
   title: string
   segments: string[]
   notes?: string | null
@@ -638,25 +834,39 @@ export async function publishTeacherTask(params: {
   targetPhoneme?: string[] | null
   availableFrom: string
   availableUntil: string
+  /** 复用已有校本练习：传入时后端直接以该模板创建 Task，不再新建模板（避免重复模板） */
+  templateId?: string | null
+  /** 新建模板时的模板标题（仅教师可见）；缺省回退到任务标题 */
+  templateTitle?: string
+  isPublic?: boolean
 }) {
+  const body: Record<string, unknown> = {
+    task_id: null,
+    course: params.classIds,
+    task_type: params.taskType,
+    title: params.title,
+    notes: encodeTaskNotes(params.notes, params.mode),
+    max_attempt: params.maxAttempt ?? null,
+    target_phoneme: params.targetPhoneme?.length ? params.targetPhoneme : null,
+    available_from: params.availableFrom,
+    available_until: params.availableUntil,
+  }
+
+  if (params.templateId) {
+    // 复用已有模板：后端只创建 Task，segments / template_title / is_public 均不下发
+    body.task_template_id = params.templateId
+  } else {
+    // 新建模板：后端在 task_template_id 为空时会顺带创建 TaskTemplate，
+    // 这三个字段必传，否则 TaskTemplate.title / is_public 为 None 导致 500
+    body.task_template_id = null
+    body.template_title = params.templateTitle ?? params.title
+    body.is_public = params.isPublic ?? true
+    body.segments = params.segments
+  }
+
   return request<{ success: boolean }>('teacher/task/save', {
     method: 'POST',
-    body: {
-      task_id: null,
-      // 后端在 task_template_id 为空时会顺带创建 TaskTemplate，
-      // 这两个字段必传，否则 TaskTemplate.title / is_public 为 None 导致 500
-      template_title: params.title,
-      is_public: true,
-      course: params.classIds,
-      task_type: params.taskType,
-      title: params.title,
-      segments: params.segments,
-      notes: encodeTaskNotes(params.notes, params.mode),
-      max_attempt: params.maxAttempt ?? null,
-      target_phoneme: params.targetPhoneme?.length ? params.targetPhoneme : null,
-      available_from: params.availableFrom,
-      available_until: params.availableUntil,
-    },
+    body,
   })
 }
 
@@ -743,8 +953,8 @@ export async function getTeacherSessionDetails(userId: string | number, sessionI
 
 export async function getTeacherEvaluationAudio(evaluationId: string) {
   return requestBlob('teacher/evaluation/audio', {
-    method: 'GET',
-    query: { evaluation_id: evaluationId },
+    method: 'POST',
+    body: { evaluation_id: evaluationId },
   })
 }
 

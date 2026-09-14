@@ -4,7 +4,10 @@ import HomeLeftColumn from './home/HomeLeftColumn.vue'
 import HomeRightColumn from './home/HomeRightColumn.vue'
 import { useHomeEvaluation } from './home/useHomeEvaluation'
 
-const { cleanup } = useHomeEvaluation()
+const { resetAll, cleanup } = useHomeEvaluation()
+
+// 每次进入主页都从空文本开始，避免上一次的输入被缓存后再次显示
+resetAll()
 
 onUnmounted(() => {
   cleanup()

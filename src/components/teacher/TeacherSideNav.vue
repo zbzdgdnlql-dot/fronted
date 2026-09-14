@@ -7,7 +7,7 @@ const route = useRoute()
 const sideLinks = [
   { name: '概览', path: '/teacher/overview', icon: 'overview' },
   { name: '内容管理', path: '/teacher/content', icon: 'content' },
-  { name: '模板库', path: '/teacher/templates', icon: 'templates' },
+  { name: '校本共建', path: '/teacher/templates', icon: 'templates' },
   { name: '布置作业', path: '/teacher/assignments/create', icon: 'assignment' },
   { name: '批改作业', path: '/teacher/submissions', icon: 'grading' },
 ]

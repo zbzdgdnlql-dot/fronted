@@ -496,20 +496,21 @@ export async function resolveMock(
           total_score: 89,
           teacher_notes: '',
           created_at: '2026-08-10 10:20:00',
+          // start_ms / duration_ms 与后端保持一致，单位为 ticks（1ms = 10000 ticks）
           words: [
-            { word: 'Bonjour', pronunciation: 92, overall: 92, error_type: 'None', start_ms: 0, duration_ms: 460, phonemes: [{ phoneme: 'b', pronunciation: 95 }, { phoneme: 'ɔ̃', pronunciation: 88 }, { phoneme: 'ʒ', pronunciation: 93 }, { phoneme: 'u', pronunciation: 90 }, { phoneme: 'ʁ', pronunciation: 74 }] },
-            { word: 'je', pronunciation: 90, overall: 90, error_type: 'None', start_ms: 500, duration_ms: 120, phonemes: [{ phoneme: 'ʒ', pronunciation: 90 }, { phoneme: 'ə', pronunciation: 88 }] },
-            { word: "m'appelle", pronunciation: 76, overall: 75, error_type: 'Mispronunciation', start_ms: 660, duration_ms: 460, phonemes: [{ phoneme: 'm', pronunciation: 92 }, { phoneme: 'a', pronunciation: 85 }, { phoneme: 'p', pronunciation: 88 }, { phoneme: 'ɛ', pronunciation: 62 }, { phoneme: 'l', pronunciation: 90 }] },
-            { word: 'Marie', pronunciation: 88, overall: 88, error_type: 'None', start_ms: 1160, duration_ms: 380, phonemes: [{ phoneme: 'm', pronunciation: 90 }, { phoneme: 'a', pronunciation: 88 }, { phoneme: 'ʁ', pronunciation: 71 }, { phoneme: 'i', pronunciation: 92 }] },
-            { word: 'et', pronunciation: 91, overall: 91, error_type: 'None', start_ms: 1580, duration_ms: 120, phonemes: [{ phoneme: 'e', pronunciation: 94 }] },
-            { word: 'je', pronunciation: 89, overall: 89, error_type: 'None', start_ms: 1740, duration_ms: 120, phonemes: [{ phoneme: 'ʒ', pronunciation: 89 }, { phoneme: 'ə', pronunciation: 87 }] },
-            { word: 'suis', pronunciation: 85, overall: 85, error_type: 'None', start_ms: 1900, duration_ms: 260, phonemes: [{ phoneme: 's', pronunciation: 88 }, { phoneme: 'ɥ', pronunciation: 70 }, { phoneme: 'i', pronunciation: 92 }] },
-            { word: 'très', pronunciation: 62, overall: 62, error_type: 'Mispronunciation', start_ms: 2200, duration_ms: 240, phonemes: [{ phoneme: 't', pronunciation: 85 }, { phoneme: 'ʁ', pronunciation: 58 }, { phoneme: 'ɛ', pronunciation: 65 }] },
-            { word: 'heureuse', pronunciation: 84, overall: 84, error_type: 'None', start_ms: 2480, duration_ms: 420, phonemes: [{ phoneme: 'ø', pronunciation: 80 }, { phoneme: 'ʁ', pronunciation: 72 }, { phoneme: 'z', pronunciation: 90 }] },
-            { word: 'de', pronunciation: 93, overall: 93, error_type: 'None', start_ms: 2940, duration_ms: 110, phonemes: [{ phoneme: 'd', pronunciation: 94 }, { phoneme: 'ə', pronunciation: 92 }] },
-            { word: 'vous', pronunciation: 55, overall: 55, error_type: 'Mispronunciation', start_ms: 3090, duration_ms: 220, phonemes: [{ phoneme: 'v', pronunciation: 82 }, { phoneme: 'u', pronunciation: 48 }] },
-            { word: 'rencontrer', pronunciation: 80, overall: 80, error_type: 'None', start_ms: 3350, duration_ms: 480, phonemes: [{ phoneme: 'ʁ', pronunciation: 75 }, { phoneme: 'ɑ̃', pronunciation: 78 }] },
-            { word: "aujourd'hui", pronunciation: 72, overall: 72, error_type: 'Mispronunciation', start_ms: 3870, duration_ms: 520, phonemes: [{ phoneme: 'o', pronunciation: 88 }, { phoneme: 'ʒ', pronunciation: 65 }, { phoneme: 'd', pronunciation: 90 }] },
+            { word: 'Bonjour', pronunciation: 92, overall: 92, error_type: 'None', start_ms: 0, duration_ms: 4600000, phonemes: [{ phoneme: 'b', pronunciation: 95 }, { phoneme: 'ɔ̃', pronunciation: 88 }, { phoneme: 'ʒ', pronunciation: 93 }, { phoneme: 'u', pronunciation: 90 }, { phoneme: 'ʁ', pronunciation: 74 }] },
+            { word: 'je', pronunciation: 90, overall: 90, error_type: 'None', start_ms: 5000000, duration_ms: 1200000, phonemes: [{ phoneme: 'ʒ', pronunciation: 90 }, { phoneme: 'ə', pronunciation: 88 }] },
+            { word: "m'appelle", pronunciation: 76, overall: 75, error_type: 'Mispronunciation', start_ms: 6600000, duration_ms: 4600000, phonemes: [{ phoneme: 'm', pronunciation: 92 }, { phoneme: 'a', pronunciation: 85 }, { phoneme: 'p', pronunciation: 88 }, { phoneme: 'ɛ', pronunciation: 62 }, { phoneme: 'l', pronunciation: 90 }] },
+            { word: 'Marie', pronunciation: 88, overall: 88, error_type: 'None', start_ms: 11600000, duration_ms: 3800000, phonemes: [{ phoneme: 'm', pronunciation: 90 }, { phoneme: 'a', pronunciation: 88 }, { phoneme: 'ʁ', pronunciation: 71 }, { phoneme: 'i', pronunciation: 92 }] },
+            { word: 'et', pronunciation: 91, overall: 91, error_type: 'None', start_ms: 15800000, duration_ms: 1200000, phonemes: [{ phoneme: 'e', pronunciation: 94 }] },
+            { word: 'je', pronunciation: 89, overall: 89, error_type: 'None', start_ms: 17400000, duration_ms: 1200000, phonemes: [{ phoneme: 'ʒ', pronunciation: 89 }, { phoneme: 'ə', pronunciation: 87 }] },
+            { word: 'suis', pronunciation: 85, overall: 85, error_type: 'None', start_ms: 19000000, duration_ms: 2600000, phonemes: [{ phoneme: 's', pronunciation: 88 }, { phoneme: 'ɥ', pronunciation: 70 }, { phoneme: 'i', pronunciation: 92 }] },
+            { word: 'très', pronunciation: 62, overall: 62, error_type: 'Mispronunciation', start_ms: 22000000, duration_ms: 2400000, phonemes: [{ phoneme: 't', pronunciation: 85 }, { phoneme: 'ʁ', pronunciation: 58 }, { phoneme: 'ɛ', pronunciation: 65 }] },
+            { word: 'heureuse', pronunciation: 84, overall: 84, error_type: 'None', start_ms: 24800000, duration_ms: 4200000, phonemes: [{ phoneme: 'ø', pronunciation: 80 }, { phoneme: 'ʁ', pronunciation: 72 }, { phoneme: 'z', pronunciation: 90 }] },
+            { word: 'de', pronunciation: 93, overall: 93, error_type: 'None', start_ms: 29400000, duration_ms: 1100000, phonemes: [{ phoneme: 'd', pronunciation: 94 }, { phoneme: 'ə', pronunciation: 92 }] },
+            { word: 'vous', pronunciation: 55, overall: 55, error_type: 'Mispronunciation', start_ms: 30900000, duration_ms: 2200000, phonemes: [{ phoneme: 'v', pronunciation: 82 }, { phoneme: 'u', pronunciation: 48 }] },
+            { word: 'rencontrer', pronunciation: 80, overall: 80, error_type: 'None', start_ms: 33500000, duration_ms: 4800000, phonemes: [{ phoneme: 'ʁ', pronunciation: 75 }, { phoneme: 'ɑ̃', pronunciation: 78 }] },
+            { word: "aujourd'hui", pronunciation: 72, overall: 72, error_type: 'Mispronunciation', start_ms: 38700000, duration_ms: 5200000, phonemes: [{ phoneme: 'o', pronunciation: 88 }, { phoneme: 'ʒ', pronunciation: 65 }, { phoneme: 'd', pronunciation: 90 }] },
           ],
         },
         {
@@ -525,9 +526,9 @@ export async function resolveMock(
           teacher_notes: '',
           created_at: '2026-08-10 10:21:00',
           words: [
-            { word: 'Je', pronunciation: 90, overall: 90, error_type: 'None', start_ms: 0, duration_ms: 260, phonemes: [{ phoneme: 'ʒ', pronunciation: 90 }, { phoneme: 'ə', pronunciation: 88 }] },
-            { word: "m'appelle", pronunciation: 76, overall: 75, error_type: 'Mispronunciation', start_ms: 300, duration_ms: 720, phonemes: [{ phoneme: 'm', pronunciation: 92 }, { phoneme: 'a', pronunciation: 85 }, { phoneme: 'p', pronunciation: 88 }, { phoneme: 'ɛ', pronunciation: 62 }, { phoneme: 'l', pronunciation: 90 }] },
-            { word: 'Marie', pronunciation: 88, overall: 88, error_type: 'None', start_ms: 1080, duration_ms: 620, phonemes: [{ phoneme: 'm', pronunciation: 90 }, { phoneme: 'a', pronunciation: 88 }, { phoneme: 'ʁ', pronunciation: 71 }, { phoneme: 'i', pronunciation: 92 }] },
+            { word: 'Je', pronunciation: 90, overall: 90, error_type: 'None', start_ms: 0, duration_ms: 2600000, phonemes: [{ phoneme: 'ʒ', pronunciation: 90 }, { phoneme: 'ə', pronunciation: 88 }] },
+            { word: "m'appelle", pronunciation: 76, overall: 75, error_type: 'Mispronunciation', start_ms: 3000000, duration_ms: 7200000, phonemes: [{ phoneme: 'm', pronunciation: 92 }, { phoneme: 'a', pronunciation: 85 }, { phoneme: 'p', pronunciation: 88 }, { phoneme: 'ɛ', pronunciation: 62 }, { phoneme: 'l', pronunciation: 90 }] },
+            { word: 'Marie', pronunciation: 88, overall: 88, error_type: 'None', start_ms: 10800000, duration_ms: 6200000, phonemes: [{ phoneme: 'm', pronunciation: 90 }, { phoneme: 'a', pronunciation: 88 }, { phoneme: 'ʁ', pronunciation: 71 }, { phoneme: 'i', pronunciation: 92 }] },
           ],
         },
       ],
@@ -621,6 +622,7 @@ export async function resolveMock(
   }
   // 参考音频为二进制流：只要命中该路由，requestBlob 即返回 mock 音频 Blob。
   if (m === 'POST' && p === '/student/task/sentence_stdaudio') return { __blob: true }
+  if (m === 'POST' && p === '/student/evaluation/audio') return { __blob: true }
   if (route(/^\/student\/custom_content\/detail\/(.+)$/, p)) {
     return {
       session_id: 'mock-session-1',
@@ -832,7 +834,7 @@ export async function resolveMock(
       },
     ]
   }
-  if (m === 'GET' && p === '/teacher/evaluation/audio') {
+  if (m === 'POST' && p === '/teacher/evaluation/audio') {
     return { __blob: true }
   }
   if (m === 'POST' && p === '/teacher/comment') return { success: true }

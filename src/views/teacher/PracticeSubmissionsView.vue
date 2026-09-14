@@ -255,6 +255,11 @@ const releaseWordAudio = () => {
   wordAudioPlaying.value = false
 }
 
+// 后端下发的 start_ms / duration_ms 实际是 Azure 的 Offset / Duration，
+// 单位为 ticks（100 纳秒）：1 毫秒 = 10,000 ticks，1 秒 = 10,000,000 ticks。
+// HTMLMediaElement.currentTime 的单位是秒，故按「ticks/秒」换算。
+const TICKS_PER_SECOND = 10_000_000
+
 // 再次点击同一单词停止，否则从该词的 start_ms 播放 duration_ms 时长
 const playWordAudio = async (word: WordScoreItem) => {
   const sentence = activeSentence.value
@@ -289,14 +294,14 @@ const playWordAudio = async (word: WordScoreItem) => {
       if (audio.readyState >= 1) resolve()
     })
     if (token !== wordAudioToken) return
-    audio.currentTime = startMs / 1000
+    audio.currentTime = startMs / TICKS_PER_SECOND
     wordAudioLoading.value = false
     wordAudioPlaying.value = true
-    const endMs = startMs + durationMs
+    const endSeconds = (startMs + durationMs) / TICKS_PER_SECOND
     // 按音频时钟判停，比 timeupdate（约 250ms 粒度）精确
     const watchProgress = () => {
       if (token !== wordAudioToken) return
-      if (audio.currentTime * 1000 >= endMs) {
+      if (audio.currentTime >= endSeconds) {
         releaseWordAudio()
         return
       }

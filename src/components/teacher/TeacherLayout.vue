@@ -12,6 +12,8 @@ const showStatisticsPicker = ref(false)
 
 const showBack = computed(() => {
   if (route.path.startsWith('/teacher/statistics')) return false
+  // 布置作业页不再显示返回内容管理的顶部快捷键
+  if (route.path === '/teacher/assignments/create') return false
   return (
     route.path !== '/teacher/overview' &&
     route.path !== '/teacher/content' &&
@@ -24,7 +26,7 @@ const pageTitle = computed(() => {
   const map: Record<string, string> = {
     '/teacher/overview': '概览',
     '/teacher/content': '内容管理',
-    '/teacher/templates': '模板库',
+    '/teacher/templates': '校本共建',
     '/teacher/exercise': '练习管理',
     '/teacher/assignments/create': '创建作业',
     '/teacher/submissions': '批改作业',

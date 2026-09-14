@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { getTeacherClasses, publishTeacherTask, saveTeacherTemplate, segmentTeacherContent, type TaskMode, type TeacherClassItem } from '../../api/endpoints'
+import { useRoute, useRouter } from 'vue-router'
+import { getTeacherClasses, getTeacherTemplates, publishTeacherTask, saveTeacherTemplate, segmentTeacherContent, type TaskMode, type TeacherClassItem } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
 import { useToast } from '../../composables/useToast'
 
+const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const classesReq = useAsync<TeacherClassItem[]>()
 const saveReq = useAsync<{ success: boolean }>()
 const templateReq = useAsync<{ success: boolean }>()
 
+/** 任务标题：给学生看的标题，同一个模板每次布置可单独设置 */
 const title = ref('')
+/** 模板标题：保存/新建校本练习时仅教师可见的标题 */
+const templateTitle = ref('')
 const contentText = ref('')
 /** 留空表示不限次数（提交 null 给后端） */
 const maxSubmissions = ref<number | null>(3)
@@ -23,7 +27,19 @@ const segmentDraft = ref<string[]>([])
 const classes = ref<TeacherClassItem[]>([])
 const selectedClassIds = ref<string[]>([])
 const notes = ref('')
+/** 保存为校本练习时是否同校公开 */
+const templatePublic = ref(true)
+/** 内容经「确认分句」弹窗确认后才为 true，避免未确认就直接保存 */
+const segmentsConfirmed = ref(false)
+/** 弹窗确认后需要继续执行的动作 */
+const pendingAction = ref<'publish' | 'template' | null>(null)
+/** 从校本练习布置进来时记录来源模板 id（用于复用模板、避免重复保存） */
+const sourceTemplateId = ref<string | null>(null)
+/** 来源模板的标题+句子指纹，用于判断内容是否被修改 */
+const sourceTemplateSignature = ref<string | null>(null)
 const DEFAULT_DURATION_MS = 7 * 24 * 60 * 60 * 1000
+/** 练习任务后端仍要求非空的开放时间，用远期时间表示「不设截止」 */
+const PRACTICE_UNTIL_ISO = new Date('2099-12-31T23:59:00').toISOString()
 type TimeField = 'from' | 'until'
 type CalendarPanel = 'date' | 'year' | 'month'
 
@@ -131,11 +147,14 @@ const taskTypes = [
 
 /** 记录上一次切分所用的原文，避免内容未变时重复切分覆盖老师在弹窗里的修改 */
 const segmentSource = ref('')
+/** 记录当前 segmentedSentences 对应的原文，用于判断切分结果是否已与内容同步 */
+const segmentedText = ref('')
 
 const onSegment = () => {
   const text = contentText.value.trim()
   if (!text) return
   if (text === segmentSource.value) return
+  segmentsConfirmed.value = false
   void segment()
 }
 
@@ -143,6 +162,7 @@ const onSegment = () => {
 const applySegments = (next: string[], openEditor = true) => {
   const changed = next.join('\n') !== segmentedSentences.value.join('\n')
   segmentedSentences.value = next
+  if (changed) segmentsConfirmed.value = false
   if (openEditor && changed && next.length) {
     segmentDraft.value = [...next]
     segmentEditorOpen.value = true
@@ -157,8 +177,10 @@ const removeSegmentDraft = (index: number) => {
   segmentDraft.value.splice(index, 1)
 }
 
+/** 取消：关闭弹窗并放弃待执行动作，不改变 segmentedSentences */
 const cancelSegmentDraft = () => {
   segmentEditorOpen.value = false
+  pendingAction.value = null
 }
 
 const confirmSegmentDraft = () => {
@@ -168,7 +190,15 @@ const confirmSegmentDraft = () => {
     return
   }
   segmentedSentences.value = cleaned
+  segmentsConfirmed.value = true
+  segmentSource.value = contentText.value.trim()
+  segmentedText.value = contentText.value.trim()
   segmentEditorOpen.value = false
+  // 确认后继续执行此前被拦下的保存/发布动作，避免教师再点一次
+  const action = pendingAction.value
+  pendingAction.value = null
+  if (action === 'publish') void onPublish()
+  else if (action === 'template') void saveAsTemplate()
 }
 
 const maxSubmissionsInput = (event: Event) => {
@@ -346,23 +376,24 @@ const segment = async (openEditor = true) => {
   if (!text) {
     segmentedSentences.value = []
     segmentSource.value = ''
+    segmentedText.value = ''
     return
   }
   segmentSource.value = text
-  if (selectedMode.value === 'word') {
-    applySegments(splitWords(text), openEditor)
-    return
-  }
-  if (selectedMode.value === 'pair') {
-    applySegments(splitPairs(text), openEditor)
-    return
-  }
-  applySegments(await segmentByBackend(text), openEditor)
+  let next: string[]
+  if (selectedMode.value === 'word') next = splitWords(text)
+  else if (selectedMode.value === 'pair') next = splitPairs(text)
+  else next = await segmentByBackend(text)
+  applySegments(next, openEditor)
+  // 只有切分结果真正落地后才标记已同步，避免内容刚改动就用旧结果发布
+  segmentedText.value = text
 }
 
 const onModeSelect = (mode: TaskMode) => {
   if (selectedMode.value === mode) return
   selectedMode.value = mode
+  // 换模式会改变切分口径，需重新确认分句
+  segmentsConfirmed.value = false
   if (contentText.value.trim()) void segment()
 }
 
@@ -372,16 +403,52 @@ const publish = async () => {
     return
   }
   if (!title.value.trim()) {
-    toast.push('请输入练习标题', 'warning')
+    toast.push('请输入任务标题', 'warning')
     return
   }
-  if (!segmentedSentences.value.length) await segment(false)
+  // 内容未确认先弹「确认分句」窗口，确认后自动继续发布，无需再点一次
+  if (!(await ensureSegmentsConfirmed('publish'))) return
+  await doPublish()
+}
+
+/** 当前编辑态的模板指纹（模板标题 + 分句），用于判断相对来源模板是否被修改 */
+const currentTemplateSignature = computed(() => JSON.stringify([
+  templateTitle.value.trim(),
+  segmentedSentences.value,
+]))
+
+/** 从校本练习进入且未做任何修改 */
+const isTemplateUnchanged = computed(() =>
+  !!sourceTemplateId.value
+  && sourceTemplateSignature.value !== null
+  && currentTemplateSignature.value === sourceTemplateSignature.value,
+)
+
+/** 从校本练习进入且未修改时，禁止重复保存为校本练习 */
+const canSaveAsTemplate = computed(() => !isTemplateUnchanged.value)
+
+/** 确保内容已切分且经教师确认；未确认时弹出确认窗口并记下待执行动作 */
+const ensureSegmentsConfirmed = async (action: 'publish' | 'template'): Promise<boolean> => {
+  // 内容已改动但切分结果还没跟上（例如刚失焦、分句接口未返回）时，先重新切分
+  if (contentText.value.trim() !== segmentedText.value || !segmentedSentences.value.length) {
+    await segment(false)
+  }
   if (!segmentedSentences.value.length) {
     toast.push('请输入练习内容', 'warning')
-    return
+    return false
   }
-  const from = toIso(availableFrom.value)
-  const until = toIso(availableUntil.value)
+  if (segmentsConfirmed.value) return true
+  pendingAction.value = action
+  segmentDraft.value = [...segmentedSentences.value]
+  segmentEditorOpen.value = true
+  return false
+}
+
+const doPublish = async () => {
+  const isPractice = taskType.value === 'practice'
+  // 练习任务不设截止时间与尝试次数；后端开放时间字段非空，用远期时间表示「不限」
+  const from = isPractice ? new Date().toISOString() : toIso(availableFrom.value)
+  const until = isPractice ? PRACTICE_UNTIL_ISO : toIso(availableUntil.value)
   if (!from || !until) {
     toast.push('请选择开始和截止时间', 'warning')
     return
@@ -390,6 +457,8 @@ const publish = async () => {
     toast.push('截止时间需要晚于开始时间', 'warning')
     return
   }
+  // 从模板进入且内容未改：复用原模板，避免每次布置都新建一个一模一样的模板
+  const reuseTemplateId = sourceTemplateId.value && isTemplateUnchanged.value ? sourceTemplateId.value : null
 
   try {
     await saveReq.run(() => publishTeacherTask({
@@ -399,9 +468,11 @@ const publish = async () => {
       notes: notes.value.trim() || null,
       mode: selectedMode.value,
       taskType: taskType.value,
-      maxAttempt: maxSubmissions.value,
+      maxAttempt: isPractice ? null : maxSubmissions.value,
       availableFrom: from,
       availableUntil: until,
+      templateId: reuseTemplateId,
+      templateTitle: templateTitle.value.trim() || title.value.trim(),
     }))
     toast.push('任务已发布', 'success')
     await router.push('/teacher/content')
@@ -411,24 +482,25 @@ const publish = async () => {
 }
 
 const saveAsTemplate = async () => {
-  if (!title.value.trim()) {
-    toast.push('请输入模板标题', 'warning')
-    return
-  }
-  if (!segmentedSentences.value.length) await segment(false)
-  if (!segmentedSentences.value.length) {
-    toast.push('请输入练习内容', 'warning')
+  if (!(await ensureSegmentsConfirmed('template'))) return
+  await doSaveTemplate()
+}
+
+const doSaveTemplate = async () => {
+  const templateName = templateTitle.value.trim() || title.value.trim()
+  if (!templateName) {
+    toast.push('请输入练习标题', 'warning')
     return
   }
   try {
     await templateReq.run(() => saveTeacherTemplate({
-      title: title.value.trim(),
+      title: templateName,
       segments: segmentedSentences.value,
-      isPublic: true,
+      isPublic: templatePublic.value,
     }))
-    toast.push('已保存为模板（同校公开）', 'success')
+    toast.push(templatePublic.value ? '已保存为校本练习（同校公开）' : '已保存为校本练习（仅自己可见）', 'success')
   } catch {
-    toast.push(templateReq.error.value ?? '保存模板失败，请稍后重试', 'error')
+    toast.push(templateReq.error.value ?? '保存校本练习失败，请稍后重试', 'error')
   }
 }
 const onSaveAsTemplate = () => {
@@ -443,8 +515,37 @@ const load = async () => {
   selectedClassIds.value = classes.value[0]?.class_id ? [classes.value[0].class_id] : []
 }
 
+/** 从「校本共建」点布置跳转过来时，按 query.templateId 带入对应练习内容 */
+const loadTemplateFromQuery = async () => {
+  const templateId = route.query.templateId
+  if (typeof templateId !== 'string' || !templateId) return
+  try {
+    const { data } = await getTeacherTemplates()
+    const template = data.find((item) => item.template_id === templateId)
+    if (!template) {
+      toast.push('未找到对应的校本练习', 'warning')
+      return
+    }
+    title.value = template.title
+    templateTitle.value = template.title
+    contentText.value = template.segments.join('\n')
+    segmentedSentences.value = [...template.segments]
+    // 模板带入的内容视为已确认，避免点保存时又弹一次确认窗口
+    segmentsConfirmed.value = true
+    // 记录来源模板，未修改内容时复用该模板、禁止重复保存为校本练习
+    sourceTemplateId.value = template.template_id
+    sourceTemplateSignature.value = JSON.stringify([template.title.trim(), template.segments])
+    // 同步切分来源，避免内容区失焦时重新切分覆盖带入的结果
+    segmentSource.value = contentText.value.trim()
+    segmentedText.value = contentText.value.trim()
+  } catch {
+    toast.push('校本练习内容加载失败，请稍后重试', 'error')
+  }
+}
+
 onMounted(() => {
   void load()
+  void loadTemplateFromQuery()
 })
 </script>
 
@@ -455,12 +556,15 @@ onMounted(() => {
         <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
           <div class="flex flex-col gap-4">
             <h3 class="text-sm font-black text-[#1F2937]">任务基础信息</h3>
-            <input
-              v-model="title"
-              type="text"
-              placeholder="练习标题"
-              class="w-full px-4 py-3 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
-            />
+            <div class="flex flex-col gap-2">
+              <span class="text-xs font-black text-[#64748B]">任务标题（学生看到）</span>
+              <input
+                v-model="title"
+                type="text"
+                placeholder="任务标题"
+                class="w-full px-4 py-3 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
+              />
+            </div>
             <div class="flex flex-col gap-2">
               <span class="text-xs font-black text-[#64748B]">任务类型</span>
               <div class="flex items-center gap-2">
@@ -543,7 +647,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
+        <div v-if="taskType === 'homework'" class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
           <div class="flex flex-col gap-4">
             <h3 class="text-sm font-black text-[#1F2937]">开放时间与提交次数</h3>
             <div class="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 flex flex-col gap-3">
@@ -860,14 +964,58 @@ onMounted(() => {
         </div>
       </div>
 
+      <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4">
+        <div class="flex flex-col gap-2">
+          <span class="text-xs font-black text-[#64748B]">练习标题（教师看到）</span>
+          <input
+            v-model="templateTitle"
+            type="text"
+            placeholder="练习标题，留空则用任务标题"
+            class="w-full px-4 py-3 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
+          />
+        </div>
+        <div class="flex flex-col gap-2">
+          <span class="text-xs font-black text-[#64748B]">校本练习可见范围</span>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              :class="[
+                'px-3 py-2 rounded-lg border text-xs font-black transition-colors',
+                templatePublic
+                  ? 'bg-[#356B00] border-[#356B00] text-white'
+                  : 'bg-white border-[#E2E8F0] text-[#64748B] hover:border-[#58CC02]',
+              ]"
+              @click="templatePublic = true"
+            >
+              同校公开
+            </button>
+            <button
+              type="button"
+              :class="[
+                'px-3 py-2 rounded-lg border text-xs font-black transition-colors',
+                !templatePublic
+                  ? 'bg-[#356B00] border-[#356B00] text-white'
+                  : 'bg-white border-[#E2E8F0] text-[#64748B] hover:border-[#58CC02]',
+              ]"
+              @click="templatePublic = false"
+            >
+              仅自己可见
+            </button>
+          </div>
+        </div>
+      </div>
+
       <button
         type="button"
         class="w-full bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] py-4 text-center text-sm font-bold text-[#334155] hover:bg-[#F8FAFC] transition-colors disabled:text-[#CBD5E1] disabled:hover:bg-white"
         @click="onSaveAsTemplate"
-        :disabled="templateReq.loading.value"
+        :disabled="templateReq.loading.value || !canSaveAsTemplate"
       >
-        {{ templateReq.loading.value ? '保存中...' : '保存为模板' }}
+        {{ templateReq.loading.value ? '保存中...' : '保存为校本练习' }}
       </button>
+      <p v-if="!canSaveAsTemplate" class="text-xs font-bold text-[#9CA3AF] text-center -mt-2">
+        当前内容与该校本练习完全一致，无需重复保存
+      </p>
 
       <button
         type="button"

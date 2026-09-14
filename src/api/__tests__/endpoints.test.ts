@@ -74,6 +74,7 @@ import {
   createStudentTestSession,
   getStudentTaskDetail,
   getStudentSessionDetails,
+  getStudentEvaluationAudio,
   getStudentTasks,
   getStudentTaskRecords,
   submitStudentTestSession,
@@ -331,11 +332,19 @@ describe('api/endpoints', () => {
     )
   })
 
-  it('teacher evaluation audio uses GET teacher/evaluation/audio with evaluation_id', async () => {
+  it('teacher evaluation audio uses POST teacher/evaluation/audio with evaluation_id', async () => {
     await getTeacherEvaluationAudio('e1')
     expect(requestBlob).toHaveBeenCalledWith(
       'teacher/evaluation/audio',
-      expect.objectContaining({ method: 'GET', query: { evaluation_id: 'e1' } }),
+      expect.objectContaining({ method: 'POST', body: { evaluation_id: 'e1' } }),
+    )
+  })
+
+  it('student evaluation audio uses POST student/evaluation/audio with evaluation_id', async () => {
+    await getStudentEvaluationAudio('e1')
+    expect(requestBlob).toHaveBeenCalledWith(
+      'student/evaluation/audio',
+      expect.objectContaining({ method: 'POST', body: { evaluation_id: 'e1' } }),
     )
   })
 

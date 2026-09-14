@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { BookOpen, ListTodo, ChevronRight } from 'lucide-vue-next'
+import { BookOpen } from 'lucide-vue-next'
 import SkeletonBlock from '../../components/SkeletonBlock.vue'
 import type { StudentTaskItem } from '../../api/endpoints'
 import {
@@ -71,15 +71,15 @@ const formatDeadline = (value: string | null | undefined) => {
 
 // ---- 列表高度：xl 单屏布局下按终端可用高度显示整条任务，超出部分滚动查看 ----
 const LIST_GAP = 12 // 列表 gap-3
-const PAGE_BOTTOM_PADDING = 32 // 页面 p-8
-const SECTION_GAP = 24 // aside gap-6
+const CARD_BOTTOM_PADDING = 24 // 卡片 p-6
 const listEl = ref<HTMLElement | null>(null)
-const chaptersEl = ref<HTMLElement | null>(null)
+const cardEl = ref<HTMLElement | null>(null)
 const listMaxHeight = ref<number | null>(null)
 
 const measureListHeight = () => {
   const list = listEl.value
-  if (!list || props.loading || !window.matchMedia('(min-width: 1280px)').matches) {
+  const card = cardEl.value
+  if (!list || !card || props.loading || !window.matchMedia('(min-width: 1280px)').matches) {
     listMaxHeight.value = null
     return
   }
@@ -88,10 +88,9 @@ const measureListHeight = () => {
     listMaxHeight.value = null
     return
   }
-  // 可用高度 = 视口底部 - 列表顶部 - 页面下边距 - 下方章节卡片高度 - 卡片间距
-  const chaptersHeight = chaptersEl.value?.getBoundingClientRect().height ?? 0
+  // 可用高度 = 卡片底部 - 卡片下内边距 - 列表顶部
   const available =
-    window.innerHeight - list.getBoundingClientRect().top - PAGE_BOTTOM_PADDING - chaptersHeight - SECTION_GAP
+    card.getBoundingClientRect().bottom - CARD_BOTTOM_PADDING - list.getBoundingClientRect().top
   if (available <= 0) {
     listMaxHeight.value = null
     return
@@ -134,9 +133,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="w-full xl:w-[320px] flex flex-col gap-6 shrink-0">
+  <aside class="w-full xl:w-[320px] flex flex-col gap-6 shrink-0 xl:h-[calc(100vh-136px)]">
     <!-- Class Content Section -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+    <div
+      ref="cardEl"
+      class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex-1 flex flex-col min-h-0"
+    >
       <div class="flex items-center gap-3 mb-6">
         <div class="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center">
           <BookOpen class="w-4 h-4 text-[#70C125]" />
@@ -146,7 +148,7 @@ onUnmounted(() => {
 
       <div
         ref="listEl"
-        class="flex flex-col gap-3 overflow-y-auto pr-1"
+        class="flex flex-col gap-3 overflow-y-auto pr-1 flex-1 min-h-0"
         :style="listMaxHeight ? { maxHeight: `${listMaxHeight}px` } : undefined"
       >
         <template v-if="loading">
@@ -168,22 +170,26 @@ onUnmounted(() => {
           >
             <div v-if="item.task_id === selectedTaskId" class="absolute left-0 top-0 bottom-0 w-1 bg-[#70C125]"></div>
 
-            <h4 class="text-[15px] font-bold text-gray-900 mb-2">{{ item.title }}</h4>
-            <p class="text-xs font-bold text-gray-400 mb-3">截止 {{ formatDeadline(item.available_until) }}</p>
-
-            <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="flex items-start justify-between gap-3 mb-2">
+              <h4 class="min-w-0 break-words text-[15px] font-bold text-gray-900">{{ item.title }}</h4>
+              <span
+                class="shrink-0 px-2 py-0.5 rounded text-xs font-black"
+                :class="completionClass(item)"
+              >
+                {{ completionLabel(item) }}
+              </span>
+            </div>
+            <div class="flex items-center justify-between gap-3 mb-3">
               <span
                 class="px-2 py-0.5 rounded text-xs font-black"
                 :class="taskStatusClass(item)"
               >
                 {{ taskStatusLabel(item) }}
               </span>
-              <span
-                class="px-2 py-0.5 rounded text-xs font-black"
-                :class="completionClass(item)"
-              >
-                {{ completionLabel(item) }}
-              </span>
+              <span class="text-xs font-bold text-gray-400">截止 {{ formatDeadline(item.available_until) }}</span>
+            </div>
+
+            <div class="flex items-center justify-between gap-3">
               <span class="text-xs font-medium text-gray-500">平均分: {{ item.avg_score < 0 ? '--' : item.avg_score.toFixed(1) }}</span>
               <span class="text-xs font-black text-gray-400">已尝试 {{ attemptCount(item) }} 次</span>
             </div>
@@ -207,56 +213,31 @@ onUnmounted(() => {
           >
             <div v-if="item.task_id === selectedTaskId" class="absolute left-0 top-0 bottom-0 w-1 bg-[#70C125]"></div>
 
-            <h4 class="text-[15px] font-bold text-gray-900 mb-2">{{ item.title }}</h4>
-            <p class="text-xs font-bold text-gray-400 mb-3">截止 {{ formatDeadline(item.available_until) }}</p>
-
-            <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="flex items-start justify-between gap-3 mb-2">
+              <h4 class="min-w-0 break-words text-[15px] font-bold text-gray-900">{{ item.title }}</h4>
+              <span
+                class="shrink-0 px-2 py-0.5 rounded text-xs font-black"
+                :class="completionClass(item)"
+              >
+                {{ completionLabel(item) }}
+              </span>
+            </div>
+            <div class="flex items-center justify-between gap-3 mb-3">
               <span
                 class="px-2 py-0.5 rounded text-xs font-black"
                 :class="taskStatusClass(item)"
               >
                 {{ taskStatusLabel(item) }}
               </span>
-              <span
-                class="px-2 py-0.5 rounded text-xs font-black"
-                :class="completionClass(item)"
-              >
-                {{ completionLabel(item) }}
-              </span>
+              <span class="text-xs font-bold text-gray-400">截止 {{ formatDeadline(item.available_until) }}</span>
+            </div>
+
+            <div class="flex items-center justify-between gap-3">
               <span class="text-xs font-medium text-gray-500">平均分: {{ item.avg_score < 0 ? '--' : item.avg_score.toFixed(1) }}</span>
               <span class="text-xs font-black text-gray-400">已尝试 {{ attemptCount(item) }} 次</span>
             </div>
           </button>
         </template>
-      </div>
-    </div>
-
-    <!-- Chapters Section -->
-    <div ref="chaptersEl" class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex-1">
-      <div class="flex items-center gap-3 mb-6">
-        <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
-          <ListTodo class="w-4 h-4 text-blue-500" />
-        </div>
-        <h3 class="text-lg font-extrabold text-gray-900">课程章节</h3>
-      </div>
-
-      <div class="flex flex-col gap-2">
-        <button 
-          v-for="n in 3"
-          :key="n"
-          class="flex items-center justify-between p-3 rounded-xl transition-all text-left w-full group bg-white border border-gray-100 opacity-70 cursor-not-allowed"
-          disabled
-        >
-          <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-black bg-gray-100 text-gray-500">
-              {{ n }}
-            </div>
-            <span class="text-[15px] font-bold text-gray-700">章节功能待接入</span>
-          </div>
-          
-          <ChevronRight class="w-4 h-4 text-gray-300" />
-        </button>
-        <!-- TODO: 接入章节/单元学习相关接口（当前后端文档未提供对应 student unit_learning API）。 -->
       </div>
     </div>
   </aside>

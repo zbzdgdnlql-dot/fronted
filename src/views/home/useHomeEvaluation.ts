@@ -24,10 +24,6 @@ type SentenceResult = {
   recordedAudio?: Blob | null
 }
 
-// ---- 本地演示用 mock 文本：6 句，含 2 处长句（用于验证换行 / 省略 / 展开） ----
-const MOCK_EVALUATION_TEXT =
-  "Bonjour, je m'appelle Marie. J'ai vingt-trois ans et j'étudie le français à l'université de Lyon depuis deux ans. Le matin, je me lève à sept heures et je prends mon petit-déjeuner dans un café près de chez moi avant d'aller en cours. J'aime beaucoup la culture française, surtout le cinéma et la musique. Le week-end, je retrouve mes amis pour nous promener au bord de la rivière ou visiter les marchés traditionnels de la ville. Plus tard, j'aimerais devenir professeure de langues et travailler dans plusieurs pays."
-
 // ---- 本地演示用 mock 评测明细：逐词得分 + 音素，用于预览右下角「单句评分分析」 ----
 const MOCK_SENTENCE_SCORE: StudentPronTestAnalyzeResultScore = {
   total_score: 78.5,
@@ -53,7 +49,8 @@ const MOCK_SENTENCE_SCORE: StudentPronTestAnalyzeResultScore = {
 }
 
 // ---- 共享状态（模块级单例，主页左右两列共用同一份） ----
-const textContent = ref(MOCK_EVALUATION_TEXT)
+// 初始为空，不预填/缓存任何文本
+const textContent = ref('')
 const sentences = ref<string[]>([])
 const activeIndex = ref(0)
 const results = ref<SentenceResult[]>([])

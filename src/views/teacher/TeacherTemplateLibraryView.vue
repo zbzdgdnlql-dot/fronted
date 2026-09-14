@@ -50,7 +50,7 @@ onMounted(() => {
           <Library class="w-5 h-5" />
         </span>
         <div class="flex flex-col">
-          <h2 class="text-2xl font-black text-[#1F2937] tracking-tight">模板库</h2>
+          <h2 class="text-2xl font-black text-[#1F2937] tracking-tight">校本共建</h2>
           <p class="text-sm font-bold text-[#9CA3AF] mt-0.5">保存、浏览、复用你的朗读练习内容</p>
         </div>
       </div>
@@ -66,7 +66,7 @@ onMounted(() => {
           内容管理
         </button>
         <span class="px-4 py-2 rounded-xl text-sm font-black bg-white text-[#5E9E1A] shadow-sm">
-          模板库
+          校本共建
         </span>
       </div>
 
@@ -77,7 +77,7 @@ onMounted(() => {
           class="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-[#F3F4F6] text-[#9CA3AF] text-sm font-black cursor-not-allowed"
         >
           <FilePlus class="w-4 h-4" />
-          新建模板
+          新建校本练习
         </button>
         <span class="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full bg-[#E5E7EB] text-[9px] font-black text-[#6B7280]">
           即将上线
@@ -101,8 +101,8 @@ onMounted(() => {
 
     <EmptyState
       v-else-if="!templates.length"
-      title="暂无模板"
-      description="模板是内容仓库，可从模板一键布置为作业。前往内容管理创建你的第一个朗读内容。"
+      title="暂无校本练习"
+      description="校本练习是内容仓库，可从校本练习一键布置为作业。前往内容管理创建你的第一个朗读内容。"
       action-label="前往内容管理"
       @action="router.push('/teacher/content')"
     />
@@ -110,9 +110,9 @@ onMounted(() => {
     <div v-else class="flex flex-col gap-6">
       <div class="flex flex-wrap items-center justify-between gap-4">
         <span class="text-xs font-black text-[#9CA3AF] uppercase tracking-widest">
-          共 {{ templates.length }} 个模板
+          共 {{ templates.length }} 个校本练习
         </span>
-        <span class="text-xs font-bold text-[#9CA3AF]">模板是内容仓库，可从模板一键布置为作业</span>
+        <span class="text-xs font-bold text-[#9CA3AF]">校本练习是内容仓库，可从校本练习一键布置为作业</span>
       </div>
 
       <article

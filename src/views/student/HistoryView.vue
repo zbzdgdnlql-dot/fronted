@@ -8,6 +8,7 @@ import {
   getStudentHistoryPhonemes,
   getStudentHistoryWordDetail,
   getStudentHistoryPhonemeDetail,
+  invalidateStudentHistoryAggregate,
 } from '../../api/endpoints'
 import type { HistoryRanking, HistoryWordDetail, HistoryPhonemeDetail } from '../../api/endpoints'
 
@@ -114,11 +115,11 @@ function renderTrendChart() {
   })
 }
 
-async function loadRanking() {
+async function loadRanking(force = false) {
   rankingLoading.value = true
   rankingError.value = ''
   try {
-    ranking.value = await getStudentHistoryRanking()
+    ranking.value = await getStudentHistoryRanking(force)
   } catch {
     ranking.value = null
     rankingError.value = '排名数据加载失败，请重试'
@@ -129,16 +130,19 @@ async function loadRanking() {
 
 async function loadOptions() {
   optionsLoading.value = true
-  try {
-    const [w, p] = await Promise.all([getStudentHistoryWords(), getStudentHistoryPhonemes()])
-    wordOptions.value = w.words ?? []
-    phonemeOptions.value = p.phonemes ?? []
-  } catch {
-    wordOptions.value = []
-    phonemeOptions.value = []
-  } finally {
-    optionsLoading.value = false
-  }
+  // 单词/音素分别取值，避免其中一个失败时把另一个也清空
+  const [wordsResult, phonemesResult] = await Promise.allSettled([
+    getStudentHistoryWords(),
+    getStudentHistoryPhonemes(),
+  ])
+  wordOptions.value = wordsResult.status === 'fulfilled' ? (wordsResult.value.words ?? []) : []
+  phonemeOptions.value = phonemesResult.status === 'fulfilled' ? (phonemesResult.value.phonemes ?? []) : []
+  optionsLoading.value = false
+}
+
+function refreshHistory() {
+  invalidateStudentHistoryAggregate()
+  loadRanking(true)
 }
 
 function onDataTypeChange() {
@@ -223,7 +227,7 @@ onBeforeUnmount(() => {
             class="bg-[#58CC02] text-white font-black text-sm px-5 py-2 rounded-xl border-b-4 border-[#46A302] hover:brightness-105 active:border-b-2 active:translate-y-0.5 transition-all cursor-pointer inline-flex items-center gap-2"
             style="box-shadow: none"
             :disabled="rankingLoading"
-            @click="loadRanking"
+            @click="refreshHistory"
           >
             <Loader2 v-if="rankingLoading" class="w-4 h-4 animate-spin" />
             <RefreshCw v-else class="w-4 h-4" />
@@ -239,7 +243,7 @@ onBeforeUnmount(() => {
           <span class="text-sm font-bold text-[#EF4444] mb-4">{{ rankingError }}</span>
           <button
             class="px-5 py-2 bg-[#58CC02] text-white font-black text-sm rounded-xl border-b-4 border-[#46A302] hover:brightness-105 active:border-b-2 active:translate-y-0.5 transition-all cursor-pointer"
-            @click="loadRanking"
+            @click="refreshHistory"
           >
             重新加载
           </button>

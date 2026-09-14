@@ -16,12 +16,17 @@ import {
 } from 'lucide-vue-next'
 import {
   getStudentTasks,
+  getStudentTaskAttemptStats,
   getStudentTaskRecords,
   getStudentSessionDetails,
   getSentenceStdAudio,
   getStudentEvaluationAudio,
 } from '../../api/endpoints'
-import type { StudentSessionEvaluationItem, StudentTaskItem } from '../../api/endpoints'
+import type {
+  StudentSessionEvaluationItem,
+  StudentTaskAttemptStat,
+  StudentTaskItem,
+} from '../../api/endpoints'
 import {
   getStudentTaskAvailability,
   getStudentTaskAvailabilityFromApi,
@@ -326,7 +331,9 @@ const playSentenceAudio = async (block: SentenceBlock, kind: AudioKind) => {
     const blob =
       kind === 'mine'
         ? await getStudentEvaluationAudio(block.evalId)
-        : await getSentenceStdAudio(selectedSessionId.value, Math.max(block.lineNumber - 1, 0))
+        // 档案页都是「任务」记录：标准录音以 task_id 落盘，必须传 task_id，
+        // 传 session_id 会落到后端 session 分支而查不到文件（500）。
+        : await getSentenceStdAudio(selectedTaskId.value, Math.max(block.lineNumber - 1, 0))
     if (token !== playbackToken) return
     audioLoading.value = false
     await playAudioBlob(blob, token)
@@ -427,6 +434,11 @@ const releaseWordAudio = () => {
   wordAudioPlaying.value = false
 }
 
+// 后端下发的 start_ms / duration_ms 实际是 Azure 的 Offset / Duration，
+// 单位为 ticks（100 纳秒）：1 毫秒 = 10,000 ticks，1 秒 = 10,000,000 ticks。
+// HTMLMediaElement.currentTime 的单位是秒，故按「ticks/秒」换算。
+const TICKS_PER_SECOND = 10_000_000
+
 // 再次点击同一单词停止，否则从该词的 start_ms 播放 duration_ms 时长
 const playWordAudio = async (word: WordItem) => {
   const key = wordAudioId(word)
@@ -457,14 +469,14 @@ const playWordAudio = async (word: WordItem) => {
       if (audio.readyState >= 1) resolve()
     })
     if (token !== wordAudioToken) return
-    audio.currentTime = startMs / 1000
+    audio.currentTime = startMs / TICKS_PER_SECOND
     wordAudioLoading.value = false
     wordAudioPlaying.value = true
-    const endMs = startMs + durationMs
+    const endSeconds = (startMs + durationMs) / TICKS_PER_SECOND
     // 按音频时钟判停，比 timeupdate（约 250ms 粒度）精确
     const watchProgress = () => {
       if (token !== wordAudioToken) return
-      if (audio.currentTime * 1000 >= endMs) {
+      if (audio.currentTime >= endSeconds) {
         releaseWordAudio()
         return
       }
@@ -517,7 +529,7 @@ const taskWindowStatus = (item: StudentTaskItem) =>
     attemptCount: item.attempt_count,
   })
 
-function mapTask(item: StudentTaskItem): TaskCardItem {
+function mapTask(item: StudentTaskItem, attemptStat: StudentTaskAttemptStat): TaskCardItem {
   const rawScore = toNumber(item.avg_score)
   const hasScore = rawScore >= 0
   const status = taskWindowStatus(item)
@@ -531,7 +543,7 @@ function mapTask(item: StudentTaskItem): TaskCardItem {
     score: hasScore ? String(Math.round(rawScore)) : '--',
     scoreClass: hasScore ? taskScoreClass(Math.round(rawScore)) : 'text-[#9CA3AF]',
     date: item.created_at ? String(item.created_at).slice(0, 10) : '--',
-    summary: `共 ${item.segmented_sentences?.length ?? 0} 句 · 已提交 ${item.attempt_count ?? 0} 次`,
+    summary: `共 ${item.segmented_sentences?.length ?? 0} 句 · 已提交 ${attemptStat.count} 次`,
   }
 }
 
@@ -564,6 +576,8 @@ async function selectTask(taskId: string) {
   attemptsLoading.value = true
   try {
     const res = await getStudentTaskRecords(taskId)
+    // 先按时间正序编「第几次」（第 1 次 = 最早提交），再整体倒序展示，
+    // 让最新一次提交排在最上面
     const list = (res.tasks ?? [])
       .map((record) => ({
         sessionId: record.session_id,
@@ -572,13 +586,15 @@ async function selectTask(taskId: string) {
         sortKey: new Date(record.completed_at || record.created_at).getTime(),
       }))
       .sort((a, b) => (Number.isFinite(a.sortKey) ? a.sortKey : 0) - (Number.isFinite(b.sortKey) ? b.sortKey : 0))
-    attempts.value = list.map((item, index) => ({
-      sessionId: item.sessionId,
-      index: index + 1,
-      score: item.score >= 0 ? `${Math.round(item.score)} 分` : '暂无分数',
-      scoreClass: item.score >= 0 ? taskScoreClass(Math.round(item.score)) : 'text-[#9CA3AF]',
-      date: item.date,
-    }))
+    attempts.value = list
+      .map((item, index) => ({
+        sessionId: item.sessionId,
+        index: index + 1,
+        score: item.score >= 0 ? `${Math.round(item.score)} 分` : '暂无分数',
+        scoreClass: item.score >= 0 ? taskScoreClass(Math.round(item.score)) : 'text-[#9CA3AF]',
+        date: item.date,
+      }))
+      .reverse()
     if (attempts.value.length === 1) await selectAttempt(attempts.value[0].sessionId)
   } catch {
     attempts.value = []
@@ -593,7 +609,15 @@ async function loadTasks() {
   loadError.value = ''
   try {
     const res = await getStudentTasks()
-    tasks.value = (res.data ?? []).map(mapTask)
+    const items = res.data ?? []
+    // `student/tasks` 不返回提交次数，单独并发补齐，口径与右侧「共 N 次提交」一致
+    const stats = await getStudentTaskAttemptStats(items.map((item) => item.task_id))
+    const emptyStat: StudentTaskAttemptStat = { count: 0, lastSubmittedAt: 0 }
+    // 按最后一次提交时间倒序：最近提交的任务排在最上面，未提交的任务排在最后
+    tasks.value = items
+      .map((item, index) => ({ item, stat: stats[index] ?? emptyStat, order: index }))
+      .sort((a, b) => b.stat.lastSubmittedAt - a.stat.lastSubmittedAt || a.order - b.order)
+      .map(({ item, stat }) => mapTask(item, stat))
     if (tasks.value.length) await selectTask(tasks.value[0].id)
   } catch {
     tasks.value = []

@@ -167,7 +167,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- Bottom Box: Sentence Analysis -->
-    <div class="bg-white rounded-[32px] p-6 border-2 border-gray-100 shadow-sm flex flex-col flex-1 min-h-0">
+    <div class="bg-white rounded-[32px] p-6 border-2 border-gray-100 shadow-sm flex flex-col flex-1 min-h-0 overflow-hidden">
       <div class="flex items-center justify-between gap-3 mb-4 shrink-0">
         <h3 class="text-lg font-black text-gray-900">单句评分分析</h3>
         <div class="flex items-center gap-2">
@@ -246,11 +246,11 @@ onBeforeUnmount(() => {
       </template>
 
       <template v-else>
-        <div class="bg-gray-50 border border-gray-100 rounded-3xl p-6 flex flex-col gap-4">
+        <div class="bg-gray-50 border border-gray-100 rounded-3xl p-6 flex flex-col gap-4 min-h-0 overflow-y-auto">
           <div class="text-sm font-bold text-gray-500">完成一次评测后将展示单句得分与音素薄弱点。</div>
-          <SkeletonBlock class="h-14 w-full" />
-          <SkeletonBlock class="h-14 w-full" />
-          <SkeletonBlock class="h-14 w-full" />
+          <SkeletonBlock class="h-14 w-full shrink-0" />
+          <SkeletonBlock class="h-14 w-full shrink-0" />
+          <SkeletonBlock class="h-14 w-full shrink-0" />
         </div>
       </template>
     </div>

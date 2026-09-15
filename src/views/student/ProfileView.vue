@@ -70,7 +70,6 @@ const statCards = computed(() => [
 
 // 资料表单：默认留空，由用户自行填写后保存
 const form = reactive({
-  gender: '' as '' | 'true' | 'false',
   email: '',
   phone: '',
 })
@@ -79,7 +78,6 @@ const saving = ref(false)
 /** 服务端数据变化时同步表单，未填写的字段保持空白 */
 const syncForm = () => {
   const detail = userDetail.value
-  form.gender = detail?.gender === true ? 'true' : detail?.gender === false ? 'false' : ''
   form.email = detail?.email ?? ''
   form.phone = detail?.phone ?? ''
 }
@@ -92,7 +90,6 @@ const saveForm = async () => {
       email: form.email.trim(),
       phone: form.phone.trim(),
     }
-    if (form.gender !== '') payload.gender = form.gender === 'true'
 
     await editUserInfo(payload)
 
@@ -206,22 +203,9 @@ onMounted(() => {
               <span class="text-xs font-black text-gray-400">学校</span>
               <span class="text-sm font-black text-gray-900">{{ schoolName }}</span>
             </div>
-            <div class="grid grid-cols-2 gap-3">
-              <label class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
-                <span class="text-xs font-black text-gray-400">性别</span>
-                <select
-                  v-model="form.gender"
-                  class="bg-transparent text-sm font-black text-gray-900 outline-none"
-                >
-                  <option value="">未填写</option>
-                  <option value="true">男</option>
-                  <option value="false">女</option>
-                </select>
-              </label>
-              <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
-                <span class="text-xs font-black text-gray-400">账号状态</span>
-                <span class="text-sm font-black text-gray-900">{{ isActiveLabel }}</span>
-              </div>
+            <div class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
+              <span class="text-xs font-black text-gray-400">账号状态</span>
+              <span class="text-sm font-black text-gray-900">{{ isActiveLabel }}</span>
             </div>
             <label class="rounded-2xl bg-[#F8F9FA] border border-gray-100 p-4 flex flex-col gap-1">
               <span class="text-xs font-black text-gray-400">邮箱</span>

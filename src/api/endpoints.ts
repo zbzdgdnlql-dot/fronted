@@ -581,7 +581,7 @@ export async function createStudentTestSession(
     method: 'POST',
     body,
     // main_page 模式后端要同步调用 Azure TTS 合成参考音频，默认 10s 容易超时
-    timeoutMs: taskId ? undefined : 60_000,
+    timeoutMs: taskId ? undefined : 120_000,
   })
 }
 
@@ -755,6 +755,25 @@ export async function getTeacherClassStudents(classId: string) {
   })
 }
 
+export type TeacherProblemAreaItem = {
+  phoneme?: string
+  word?: string
+  score: number | null
+}
+
+export type TeacherClassProblemAreas = {
+  phonemes: TeacherProblemAreaItem[]
+  words: TeacherProblemAreaItem[]
+  sentences?: Array<{ sentence_seq?: number; sentence?: string; score?: number | null }>
+}
+
+export async function getTeacherClassProblemAreas(classId: string, timeRange?: string | null) {
+  return request<TeacherClassProblemAreas>('teacher/class/problem_areas', {
+    method: 'POST',
+    body: { class_id: classId, time_range: timeRange ?? null },
+  })
+}
+
 export type TeacherScoreSummary = {
   overall: number | null
   pronunciation: number | null
@@ -804,6 +823,7 @@ export async function segmentTeacherContent(contentText: string) {
   return request<SegmentTeacherContentResponse>('teacher/task/auto_segment', {
     method: 'POST',
     query: { text: contentText },
+    timeoutMs: 60_000,
   })
 }
 
@@ -826,7 +846,8 @@ export async function createTeacherContent(params: {
       task_id: null,
       // 同 publishTeacherTask：创建 TaskTemplate 的必填字段
       template_title: params.title,
-      is_public: true,
+      // 可见范围：1 全校公开（后端 is_public 为整型：0 不复用 / 1 全校公开 / 2 仅自己可复用）
+      is_public: 1,
       course: [params.classId],
       task_type: params.taskType ?? 'homework',
       title: params.title,
@@ -837,6 +858,7 @@ export async function createTeacherContent(params: {
       available_from: params.availableFrom ?? new Date().toISOString(),
       available_until: params.availableUntil ?? defaultUntil,
     },
+    timeoutMs: 120_000,
   })
 }
 
@@ -856,7 +878,8 @@ export async function publishTeacherTask(params: {
   templateId?: string | null
   /** 新建模板时的模板标题（仅教师可见）；缺省回退到任务标题 */
   templateTitle?: string
-  isPublic?: boolean
+  /** 新建模板的可见范围：0 不复用 / 1 全校公开 / 2 仅自己可复用 */
+  isPublic?: number
 }) {
   const body: Record<string, unknown> = {
     task_id: null,
@@ -878,25 +901,27 @@ export async function publishTeacherTask(params: {
     // 这三个字段必传，否则 TaskTemplate.title / is_public 为 None 导致 500
     body.task_template_id = null
     body.template_title = params.templateTitle ?? params.title
-    body.is_public = params.isPublic ?? true
+    body.is_public = params.isPublic ?? 1
     body.segments = params.segments
   }
 
   return request<{ success: boolean }>('teacher/task/save', {
     method: 'POST',
     body,
+    timeoutMs: 120_000,
   })
 }
 
 /**
- * 保存为模板：不传 course / task_id，后端据此只创建 TaskTemplate（同校公开）。
+ * 保存为模板：不传 course / task_id，后端据此只创建 TaskTemplate。
  * 依据 service.py：task_template_id 为空 → 创建模板；course 为空 → 不创建 Task。
  */
 export async function saveTeacherTemplate(params: {
   title: string
   segments: string[]
   targetPhoneme?: string[] | null
-  isPublic?: boolean
+  /** 可见范围：0 不复用 / 1 全校公开 / 2 仅自己可复用 */
+  isPublic?: number
 }) {
   return request<{ success: boolean }>('teacher/task/save', {
     method: 'POST',
@@ -906,8 +931,9 @@ export async function saveTeacherTemplate(params: {
       template_title: params.title,
       segments: params.segments,
       target_phoneme: params.targetPhoneme?.length ? params.targetPhoneme : null,
-      is_public: params.isPublic ?? true,
+      is_public: params.isPublic ?? 1,
     },
+    timeoutMs: 120_000,
   })
 }
 

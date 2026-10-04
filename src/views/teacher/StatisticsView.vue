@@ -10,8 +10,6 @@ import {
   Calendar,
   TrendingUp,
   SlidersHorizontal,
-  ChevronDown,
-  FileText,
   RefreshCw,
   Mic,
   Activity,
@@ -26,10 +24,14 @@ import {
   getTeacherClasses,
   getTeacherClassStudents,
   getTeacherClassTasks,
+  getTeacherClassProblemAreas,
   getTeacherTaskBasicInformation,
+  getTeacherTaskRecords,
   getTeacherTasks,
-  type TeacherClassTaskSummary,
+  type TeacherClassProblemAreas,
+  type TeacherClassStudent,
   type TeacherScoreSummary,
+  type TeacherTaskItem,
 } from '../../api/endpoints'
 
 const route = useRoute()
@@ -51,6 +53,23 @@ const completionRate = ref(0)
 const excellentRate = ref(0)
 const loading = ref(false)
 const loadError = ref('')
+const activeTab = ref('班级概览')
+const selectedTimeRange = ref<'3days' | 'week' | '30days' | '90days' | ''>('30days')
+const selectedTaskType = ref<'all' | 'homework' | 'practice'>('all')
+const students = ref<TeacherClassStudent[]>([])
+const taskItems = ref<TeacherTaskItem[]>([])
+const analyzedTasks = ref<Array<{ task: TeacherTaskItem; info: TeacherScoreSummary }>>([])
+const activityRecords = ref<Array<{
+  taskTitle: string
+  studentName: string
+  score: number | null
+  completedAt: string | null
+}>>([])
+const activityLoading = ref(false)
+const activityLoaded = ref(false)
+const weakAreas = ref<TeacherClassProblemAreas | null>(null)
+const weakAreasLoading = ref(false)
+const weakAreasError = ref('')
 
 const trendLabels = ref<string[]>([])
 const trendOverall = ref<number[]>([])
@@ -73,6 +92,25 @@ const metricCards = computed(() => [
 ])
 
 const tabs = ['班级概览', '学生表现', '单元分析', '学习活动', '薄弱环节', '教学建议']
+
+const recommendations = computed(() => {
+  const dimensions = [
+    { name: '发音', score: averagePron.value },
+    { name: '节奏', score: averageRhythm.value },
+    { name: '流利度', score: averageFluency.value },
+    { name: '完整度', score: averageCompleteness.value },
+  ].filter((item) => item.score > 0)
+  if (!dimensions.length) return ['当前筛选范围内暂无维度评分，布置测评并收集提交后即可生成建议。']
+
+  const weakest = [...dimensions].sort((a, b) => a.score - b.score)[0]
+  const suggestions = [`优先安排${weakest.name}专项练习，当前班级均分为 ${weakest.score} 分。`]
+  const needsSupport = students.value.filter((student) => (student.average_score ?? 100) < 70)
+  if (needsSupport.length) suggestions.push(`建议跟进 ${needsSupport.length} 名平均分低于 70 分的学生。`)
+  if (activeCount.value < studentCount.value) {
+    suggestions.push(`本周有 ${studentCount.value - activeCount.value} 名学生未参与评测，可安排一次短时复测。`)
+  }
+  return suggestions
+})
 
 function avgBadge(value: number) {
   if (value >= 85) return '优秀'
@@ -234,6 +272,21 @@ function computeDistribution(scores: number[]) {
   return d
 }
 
+function rangeStartTime() {
+  const daysByRange = { '3days': 3, week: 7, '30days': 30, '90days': 90 }
+  const days = selectedTimeRange.value
+    ? daysByRange[selectedTimeRange.value as keyof typeof daysByRange]
+    : undefined
+  return days ? Date.now() - days * 24 * 60 * 60 * 1000 : null
+}
+
+function isWithinSelectedRange(dateValue: string | null | undefined) {
+  const startTime = rangeStartTime()
+  if (startTime === null || !dateValue) return true
+  const timestamp = new Date(dateValue).getTime()
+  return !Number.isFinite(timestamp) || timestamp >= startTime
+}
+
 async function loadClassData() {
   loading.value = true
   loadError.value = ''
@@ -243,29 +296,35 @@ async function loadClassData() {
     if (found) {
       className.value = found.class_name
       studentCount.value = found.student_count
-      createdAt.value = found.created_at ? String(found.created_at).slice(0, 10) : ''
+      createdAt.value = ''
     } else if (classId.value) {
       className.value = classId.value
     }
 
-    const students = await getTeacherClassStudents(classId.value)
-    if (students.length) studentCount.value = students.length
+    students.value = await getTeacherClassStudents(classId.value)
+    if (students.value.length) studentCount.value = students.value.length
 
-    evaluationCount.value = students.reduce((sum, st) => sum + st.evaluation_count, 0)
-    const scores = students.map((st) => st.average_score).filter((s): s is number => s != null)
+    evaluationCount.value = students.value.reduce((sum, st) => sum + st.evaluation_count, 0)
+    const scores = students.value.map((st) => st.average_score).filter((s): s is number => s != null)
     overallScore.value = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0
     distributionData.value = computeDistribution(scores)
     distributionTotal.value = scores.length
     excellentRate.value = scores.length ? Math.round((scores.filter((s) => s >= 90).length / scores.length) * 100) : 0
 
     const weekAgo = Date.now() - 7 * 24 * 3600 * 1000
-    activeCount.value = students.filter((st) => st.last_evaluation && new Date(st.last_evaluation).getTime() >= weekAgo).length
+    activeCount.value = students.value.filter(
+      (st) => st.last_evaluation && new Date(st.last_evaluation).getTime() >= weekAgo,
+    ).length
 
-    const latestEval = students.map((st) => st.last_evaluation).filter(Boolean).sort().pop()
+    const latestEval = students.value.map((st) => st.last_evaluation).filter(Boolean).sort().pop()
     updatedAt.value = latestEval
       ? new Date(String(latestEval)).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
       : new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 
+    activityLoaded.value = false
+    activityRecords.value = []
+    weakAreas.value = null
+    weakAreasError.value = ''
     await loadTaskData()
 
     await nextTick()
@@ -279,16 +338,29 @@ async function loadClassData() {
 
 async function loadTaskData() {
   try {
-    const tasks = await getTeacherClassTasks(classId.value)
-    if (!tasks.length) {
-      completionRate.value = 0
-      return
-    }
-    const totalFinished = tasks.reduce((sum, t) => sum + t.finished_students_count, 0)
-    const totalSlots = tasks.length * Math.max(1, studentCount.value)
+    const [allTasks, taskSummaries] = await Promise.all([
+      getTeacherTasks().catch(() => []),
+      getTeacherClassTasks(classId.value).catch(() => []),
+    ])
+    const classTasks = allTasks.filter(
+      (task) =>
+        task.course.some((course) => course.class_id === classId.value) &&
+        isWithinSelectedRange(task.available_from),
+    )
+    taskItems.value = classTasks.filter(
+      (task) => selectedTaskType.value === 'all' || task.task_type === selectedTaskType.value,
+    )
+
+    const selectedIds = new Set(taskItems.value.map((task) => task.task_id))
+    const completionTasks =
+      selectedTaskType.value === 'practice'
+        ? []
+        : taskSummaries.filter((task) => selectedIds.has(task.task_id))
+    const totalFinished = completionTasks.reduce((sum, task) => sum + task.finished_students_count, 0)
+    const totalSlots = completionTasks.length * Math.max(1, studentCount.value)
     completionRate.value = totalSlots ? Math.round((totalFinished / totalSlots) * 100) : 0
 
-    await loadTaskDimensions(tasks)
+    await loadTaskDimensions(taskItems.value)
   } catch {
     completionRate.value = 0
   }
@@ -306,22 +378,27 @@ function overallFromSummary(info: TeacherScoreSummary) {
   return avgOf([info.pronunciation, info.rhythm, info.fluency, info.integrity])
 }
 
-async function loadTaskDimensions(tasks: TeacherClassTaskSummary[]) {
-  // 无提交的任务在 task/basic_information 会因聚合结果为空而报错，先按提交数过滤
-  const candidates = tasks.filter((t) => t.finished_students_count > 0)
-  if (!candidates.length) return
+async function loadTaskDimensions(tasks: TeacherTaskItem[]) {
+  if (!tasks.length) {
+    analyzedTasks.value = []
+    averagePron.value = 0
+    averageRhythm.value = 0
+    averageFluency.value = 0
+    averageCompleteness.value = 0
+    trendLabels.value = []
+    trendOverall.value = []
+    trendPron.value = []
+    return
+  }
 
-  const availableFrom = await getTeacherTasks()
-    .then((rows) => new Map(rows.map((t) => [t.task_id, t.available_from ?? ''])))
-    .catch(() => new Map<string, string>())
-  const sorted = [...candidates].sort((a, b) =>
-    String(availableFrom.get(a.task_id) ?? '').localeCompare(String(availableFrom.get(b.task_id) ?? '')),
+  const sorted = [...tasks].sort((a, b) =>
+    String(a.available_from ?? '').localeCompare(String(b.available_from ?? '')),
   )
 
   const summaries = await Promise.all(
     sorted.map(async (task) => {
       try {
-        const info = await getTeacherTaskBasicInformation(classId.value, task.task_id)
+        const info = await getTeacherTaskBasicInformation(classId.value, task.task_id, selectedTimeRange.value || null)
         const dims = [info.pronunciation, info.rhythm, info.fluency, info.integrity]
         return dims.some((v) => typeof v === 'number') ? { task, info } : null
       } catch {
@@ -330,22 +407,94 @@ async function loadTaskDimensions(tasks: TeacherClassTaskSummary[]) {
     }),
   )
   const valid = summaries.filter(
-    (row): row is { task: TeacherClassTaskSummary; info: TeacherScoreSummary } => row !== null,
+    (row): row is { task: TeacherTaskItem; info: TeacherScoreSummary } => row !== null,
   )
-  if (!valid.length) return
+  analyzedTasks.value = valid
+  if (!valid.length) {
+    averagePron.value = 0
+    averageRhythm.value = 0
+    averageFluency.value = 0
+    averageCompleteness.value = 0
+    trendLabels.value = []
+    trendOverall.value = []
+    trendPron.value = []
+    return
+  }
 
   averagePron.value = Math.round(avgOf(valid.map((r) => r.info.pronunciation)))
   averageRhythm.value = Math.round(avgOf(valid.map((r) => r.info.rhythm)))
   averageFluency.value = Math.round(avgOf(valid.map((r) => r.info.fluency)))
   averageCompleteness.value = Math.round(avgOf(valid.map((r) => r.info.integrity)))
 
-  trendLabels.value = valid.map((r) => (r.task.title.length > 10 ? `${r.task.title.slice(0, 10)}…` : r.task.title))
-  trendOverall.value = valid.map((r) => Math.round(overallFromSummary(r.info)))
-  trendPron.value = valid.map((r) => Math.round(r.info.pronunciation ?? 0))
+  const recent = valid.slice(-7)
+  trendLabels.value = recent.map((r) => (r.task.title.length > 10 ? `${r.task.title.slice(0, 10)}…` : r.task.title))
+  trendOverall.value = recent.map((r) => Math.round(overallFromSummary(r.info)))
+  trendPron.value = recent.map((r) => Math.round(r.info.pronunciation ?? 0))
 }
 
-function refreshData() {
-  loadClassData()
+async function loadActivity() {
+  if (activityLoaded.value || activityLoading.value) return
+  activityLoading.value = true
+  const records: typeof activityRecords.value = []
+  const recentTasks = [...taskItems.value].sort((a, b) =>
+    String(b.available_from ?? '').localeCompare(String(a.available_from ?? '')),
+  ).slice(0, 20)
+  let index = 0
+  const workers = Array.from({ length: Math.min(4, recentTasks.length) }, async () => {
+    while (index < recentTasks.length) {
+      const task = recentTasks[index++]
+      try {
+        const studentsForTask = await getTeacherTaskRecords(classId.value, task.task_id)
+        studentsForTask.forEach((student) => {
+          student.records.forEach((record) => {
+            records.push({
+              taskTitle: task.title,
+              studentName: student.username,
+              score: record.average_score,
+              completedAt: record.completed_at,
+            })
+          })
+        })
+      } catch {
+        // One task's records should not block the remaining activity feed.
+      }
+    }
+  })
+  await Promise.all(workers)
+  activityRecords.value = records
+    .filter((record) => isWithinSelectedRange(record.completedAt))
+    .sort((a, b) => String(b.completedAt ?? '').localeCompare(String(a.completedAt ?? '')))
+    .slice(0, 50)
+  activityLoaded.value = true
+  activityLoading.value = false
+}
+
+async function loadWeakAreas() {
+  if (weakAreas.value || weakAreasLoading.value || weakAreasError.value) return
+  weakAreasLoading.value = true
+  try {
+    weakAreas.value = await getTeacherClassProblemAreas(classId.value, selectedTimeRange.value || null)
+  } catch (error) {
+    weakAreasError.value = error instanceof Error ? error.message : '薄弱项接口暂时不可用'
+  } finally {
+    weakAreasLoading.value = false
+  }
+}
+
+async function selectTab(tab: string) {
+  activeTab.value = tab
+  if (tab === '学习活动') await loadActivity()
+  if (tab === '薄弱环节') await loadWeakAreas()
+  if (tab === '班级概览') {
+    await nextTick()
+    renderCharts()
+  }
+}
+
+async function refreshData() {
+  await loadClassData()
+  if (activeTab.value === '学习活动') await loadActivity()
+  if (activeTab.value === '薄弱环节') await loadWeakAreas()
 }
 
 onMounted(() => {
@@ -416,7 +565,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-white px-4 py-2 text-sm text-gray-800">
                 <Calendar class="h-4 w-4 text-gray-500" />
-                <span>创建时间 {{ createdAt || '--' }}</span>
+                <span>创建时间 {{ createdAt || '暂未提供' }}</span>
               </div>
             </div>
           </div>
@@ -449,14 +598,15 @@ onBeforeUnmount(() => {
 
     <section class="flex flex-wrap gap-3">
       <button
-        v-for="(tab, index) in tabs"
+        v-for="tab in tabs"
         :key="tab"
+        type="button"
         class="rounded-full px-4 py-2 text-sm font-semibold transition-colors duration-200"
-        :class="
-          index === 0
-            ? 'border border-[#D2F2A8] bg-[#F4FDE8] text-[#58CC02]'
-            : 'border border-[#E2E8F0] bg-white text-gray-800 hover:border-[#D2F2A8] hover:text-[#58CC02]'
-        "
+        :class="tab === activeTab
+          ? 'border border-[#D2F2A8] bg-[#F4FDE8] text-[#58CC02]'
+          : 'border border-[#E2E8F0] bg-white text-gray-800 hover:border-[#D2F2A8] hover:text-[#58CC02]'"
+        :aria-pressed="tab === activeTab"
+        @click="selectTab(tab)"
       >
         {{ tab }}
       </button>
@@ -470,20 +620,29 @@ onBeforeUnmount(() => {
           </span>
           <div>
             <p class="text-sm font-bold text-gray-900">筛选条件</p>
-            <p class="text-xs text-gray-500">快速查看班级阶段表现</p>
+            <p class="text-xs text-gray-500">维度按任务开始时间筛选，学习活动按提交时间筛选</p>
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-3">
-          <button class="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-800">
+          <label class="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-800">
             <Calendar class="h-4 w-4 text-[#58CC02]" />
-            <span>近 30 天</span>
-            <ChevronDown class="h-4 w-4 text-gray-500" />
-          </button>
-          <button class="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-800">
-            <FileText class="h-4 w-4 text-[#1CB0F6]" />
-            <span>全部测评</span>
-            <ChevronDown class="h-4 w-4 text-gray-500" />
-          </button>
+            <span class="sr-only">时间范围</span>
+            <select v-model="selectedTimeRange" class="cursor-pointer bg-transparent outline-none" @change="refreshData">
+              <option value="3days">近 3 天</option>
+              <option value="week">近 7 天</option>
+              <option value="30days">近 30 天</option>
+              <option value="90days">近 90 天</option>
+              <option value="">全部时间</option>
+            </select>
+          </label>
+          <label class="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-800">
+            <span class="sr-only">测评类型</span>
+            <select v-model="selectedTaskType" class="cursor-pointer bg-transparent outline-none" @change="refreshData">
+              <option value="all">全部测评</option>
+              <option value="homework">作业测评</option>
+              <option value="practice">练习测评</option>
+            </select>
+          </label>
           <button
             type="button"
             class="inline-flex items-center gap-2 rounded-full border border-[#D2F2A8] bg-[#58CC02] px-4 py-2.5 text-sm font-semibold text-white transition-transform duration-200 hover:-translate-y-0.5 disabled:opacity-60"
@@ -497,7 +656,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+    <section v-if="activeTab === '班级概览'" class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
       <article
         v-for="card in metricCards"
         :key="card.label"
@@ -519,7 +678,7 @@ onBeforeUnmount(() => {
       </article>
     </section>
 
-    <section class="grid min-h-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.95fr)]">
+    <section v-if="activeTab === '班级概览'" class="grid min-h-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.95fr)]">
       <article class="rounded-[28px] border border-[#E2E8F0] bg-white p-5 shadow-[0_2px_4px_rgba(36,50,56,0.04)]">
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -638,6 +797,115 @@ onBeforeUnmount(() => {
           </div>
         </article>
       </div>
+    </section>
+
+    <section v-if="activeTab === '学生表现'" class="overflow-hidden rounded-[24px] border border-[#E2E8F0] bg-white shadow-[0_2px_4px_rgba(36,50,56,0.04)]">
+      <div class="border-b border-[#E2E8F0] px-5 py-4">
+        <h3 class="text-lg font-extrabold text-gray-900">学生表现</h3>
+        <p class="mt-1 text-sm text-gray-500">数据来自教师端班级学生接口，按当前班级展示。</p>
+      </div>
+      <div v-if="loading" class="px-5 py-8 text-center text-sm text-gray-400">正在加载学生数据…</div>
+      <div v-else-if="!students.length" class="px-5 py-8 text-center text-sm text-gray-400">当前班级暂无学生数据</div>
+      <div v-else class="overflow-x-auto">
+        <table class="w-full min-w-[640px] text-left text-sm">
+          <thead class="bg-gray-50 text-xs font-bold text-gray-500">
+            <tr><th class="px-5 py-3">学生</th><th class="px-5 py-3">平均分</th><th class="px-5 py-3">测评次数</th><th class="px-5 py-3">最近测评</th></tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr v-for="student in students" :key="student.user_id">
+              <td class="px-5 py-4 font-semibold text-gray-900">{{ student.username }}</td>
+              <td class="px-5 py-4 text-gray-700">{{ student.average_score == null ? '--' : `${Math.round(student.average_score)} 分` }}</td>
+              <td class="px-5 py-4 text-gray-700">{{ student.evaluation_count }}</td>
+              <td class="px-5 py-4 text-gray-500">{{ student.last_evaluation ? new Date(student.last_evaluation).toLocaleString('zh-CN') : '暂无记录' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section v-else-if="activeTab === '单元分析'" class="overflow-hidden rounded-[24px] border border-[#E2E8F0] bg-white shadow-[0_2px_4px_rgba(36,50,56,0.04)]">
+      <div class="border-b border-[#E2E8F0] px-5 py-4">
+        <h3 class="text-lg font-extrabold text-gray-900">任务维度分析</h3>
+        <p class="mt-1 text-sm text-gray-500">按已选时间范围与测评类型汇总任务评分。</p>
+      </div>
+      <div v-if="!analyzedTasks.length" class="px-5 py-8 text-center text-sm text-gray-400">当前筛选范围内暂无任务评分</div>
+      <div v-else class="overflow-x-auto">
+        <table class="w-full min-w-[760px] text-left text-sm">
+          <thead class="bg-gray-50 text-xs font-bold text-gray-500">
+            <tr><th class="px-5 py-3">任务</th><th class="px-5 py-3">类型</th><th class="px-5 py-3">综合</th><th class="px-5 py-3">发音</th><th class="px-5 py-3">节奏</th><th class="px-5 py-3">流利度</th><th class="px-5 py-3">完整度</th></tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr v-for="row in analyzedTasks" :key="row.task.task_id">
+              <td class="px-5 py-4 font-semibold text-gray-900">{{ row.task.title }}</td>
+              <td class="px-5 py-4 text-gray-600">{{ row.task.task_type === 'homework' ? '作业' : '练习' }}</td>
+              <td class="px-5 py-4">{{ overallFromSummary(row.info).toFixed(0) }}</td>
+              <td class="px-5 py-4">{{ row.info.pronunciation ?? '--' }}</td>
+              <td class="px-5 py-4">{{ row.info.rhythm ?? '--' }}</td>
+              <td class="px-5 py-4">{{ row.info.fluency ?? '--' }}</td>
+              <td class="px-5 py-4">{{ row.info.integrity ?? '--' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section v-else-if="activeTab === '学习活动'" class="overflow-hidden rounded-[24px] border border-[#E2E8F0] bg-white shadow-[0_2px_4px_rgba(36,50,56,0.04)]">
+      <div class="border-b border-[#E2E8F0] px-5 py-4">
+        <h3 class="text-lg font-extrabold text-gray-900">最近学习活动</h3>
+        <p class="mt-1 text-sm text-gray-500">读取任务提交记录，最多展示最近 50 条。</p>
+      </div>
+      <div v-if="activityLoading" class="px-5 py-8 text-center text-sm text-gray-400">正在加载学习记录…</div>
+      <div v-else-if="!activityRecords.length" class="px-5 py-8 text-center text-sm text-gray-400">当前筛选范围暂无学习记录</div>
+      <div v-else class="overflow-x-auto">
+        <table class="w-full min-w-[640px] text-left text-sm">
+          <thead class="bg-gray-50 text-xs font-bold text-gray-500">
+            <tr><th class="px-5 py-3">学生</th><th class="px-5 py-3">任务</th><th class="px-5 py-3">得分</th><th class="px-5 py-3">提交时间</th></tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr v-for="(record, index) in activityRecords" :key="`${record.taskTitle}-${record.studentName}-${record.completedAt}-${index}`">
+              <td class="px-5 py-4 font-semibold text-gray-900">{{ record.studentName }}</td>
+              <td class="px-5 py-4 text-gray-700">{{ record.taskTitle }}</td>
+              <td class="px-5 py-4 text-gray-700">{{ record.score == null ? '--' : `${Math.round(record.score)} 分` }}</td>
+              <td class="px-5 py-4 text-gray-500">{{ record.completedAt ? new Date(record.completedAt).toLocaleString('zh-CN') : '--' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section v-else-if="activeTab === '薄弱环节'" class="rounded-[24px] border border-[#E2E8F0] bg-white p-5 shadow-[0_2px_4px_rgba(36,50,56,0.04)]">
+      <h3 class="text-lg font-extrabold text-gray-900">班级薄弱环节</h3>
+      <p class="mt-1 text-sm text-gray-500">尝试读取后端 teacher/class/problem_areas 接口。</p>
+      <div v-if="weakAreasLoading" class="py-8 text-center text-sm text-gray-400">正在加载薄弱项…</div>
+      <div v-else-if="weakAreasError" class="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        {{ weakAreasError }}。该接口当前存在后端实现问题，详情见《教师端数据统计接口问题.md》。
+      </div>
+      <div v-else-if="weakAreas" class="mt-4 grid gap-4 md:grid-cols-2">
+        <div class="rounded-2xl border border-[#E2E8F0] p-4">
+          <h4 class="font-bold text-gray-900">薄弱音素</h4>
+          <p v-if="!weakAreas.phonemes.length" class="mt-3 text-sm text-gray-400">暂无数据</p>
+          <div v-for="item in weakAreas.phonemes" :key="item.phoneme" class="mt-3 flex justify-between text-sm">
+            <span>{{ item.phoneme }}</span><span>{{ item.score ?? '--' }} 分</span>
+          </div>
+        </div>
+        <div class="rounded-2xl border border-[#E2E8F0] p-4">
+          <h4 class="font-bold text-gray-900">薄弱单词</h4>
+          <p v-if="!weakAreas.words.length" class="mt-3 text-sm text-gray-400">暂无数据</p>
+          <div v-for="item in weakAreas.words" :key="item.word" class="mt-3 flex justify-between text-sm">
+            <span>{{ item.word }}</span><span>{{ item.score ?? '--' }} 分</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section v-else-if="activeTab === '教学建议'" class="rounded-[24px] border border-[#E2E8F0] bg-white p-5 shadow-[0_2px_4px_rgba(36,50,56,0.04)]">
+      <h3 class="text-lg font-extrabold text-gray-900">教学建议</h3>
+      <p class="mt-1 text-sm text-gray-500">根据当前班级维度均分与学生表现生成。</p>
+      <ul class="mt-4 space-y-3">
+        <li v-for="suggestion in recommendations" :key="suggestion" class="rounded-2xl bg-[#F8FAFB] px-4 py-3 text-sm leading-6 text-gray-700">
+          {{ suggestion }}
+        </li>
+      </ul>
     </section>
   </div>
 </template>

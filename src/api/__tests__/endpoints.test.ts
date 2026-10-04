@@ -6,6 +6,7 @@ vi.mock('../http', () => {
       if (path === 'teacher/basic_information') return { total_classes: 0, total_students: 0, total_tasks: 0 }
       if (path === 'teacher/classes') return []
       if (path === 'teacher/tasks') return []
+      if (path === 'teacher/class/problem_areas') return { phonemes: [], words: [], sentences: [] }
       if (path === 'teacher/task/auto_segment') return { segments: ['hello'] }
       if (path === 'teacher/task_templates') {
         return [
@@ -85,6 +86,7 @@ import {
   getTeacherDashboard,
   getTeacherClasses,
   getTeacherClassStudents,
+  getTeacherClassProblemAreas,
   getTeacherClassContents,
   getTeacherTaskRecords,
   getTeacherEvaluationAudio,
@@ -96,6 +98,7 @@ import {
   getTeacherCustomContentRecords,
   createTeacherContent,
   publishTeacherTask,
+  saveTeacherTemplate,
   updateTeacherTask,
   ADMIN_LANGUAGE_OPTIONS,
   getTeacherTemplates,
@@ -287,6 +290,14 @@ describe('api/endpoints', () => {
     )
   })
 
+  it('teacher class problem areas uses POST with class and time range', async () => {
+    await getTeacherClassProblemAreas('c1', '30days')
+    expect(request).toHaveBeenCalledWith(
+      'teacher/class/problem_areas',
+      expect.objectContaining({ method: 'POST', body: { class_id: 'c1', time_range: '30days' } }),
+    )
+  })
+
   it('teacher student basic information uses POST teacher/student/basic_information', async () => {
     await getTeacherStudentBasicInformation('9')
     expect(request).toHaveBeenCalledWith(
@@ -359,9 +370,20 @@ describe('api/endpoints', () => {
   it('create teacher content uses POST teacher/task/save', async () => {
     await createTeacherContent({ classId: 'c1', title: 't', contentText: 'txt', maxSubmission: 2, targetPhonemes: ['a'] })
     const call = (request as any).mock.calls.find((c: any[]) => c[0] === 'teacher/task/save')
+    const segmentCall = (request as any).mock.calls.find((c: any[]) => c[0] === 'teacher/task/auto_segment')
+    expect(segmentCall[1]).toEqual(expect.objectContaining({ timeoutMs: 60_000 }))
     expect(call).toBeTruthy()
+    expect(call[1]).toEqual(expect.objectContaining({ timeoutMs: 120_000 }))
     expect(call[1]).toEqual(expect.objectContaining({ method: 'POST' }))
-    expect(call[1].body).toEqual(expect.objectContaining({ task_id: null, template_title: 't', is_public: true, course: ['c1'], title: 't', available_from: expect.any(String), available_until: expect.any(String) }))
+    expect(call[1].body).toEqual(expect.objectContaining({ task_id: null, template_title: 't', is_public: 1, course: ['c1'], title: 't', available_from: expect.any(String), available_until: expect.any(String) }))
+  })
+
+  it('allows longer completion time for home page session audio preparation', async () => {
+    await createStudentTestSession(null, ['Bonjour.'], 'fr')
+    expect(request).toHaveBeenCalledWith(
+      'student/pron-test/create_session',
+      expect.objectContaining({ timeoutMs: 120_000 }),
+    )
   })
 
   it('publish teacher task uses POST teacher/task/save with create payload', async () => {
@@ -378,10 +400,11 @@ describe('api/endpoints', () => {
       'teacher/task/save',
       expect.objectContaining({
         method: 'POST',
+        timeoutMs: 120_000,
         body: expect.objectContaining({
           task_id: null,
           template_title: 'task',
-          is_public: true,
+          is_public: 1,
           course: ['c1', 'c2'],
           task_type: 'homework',
           title: 'task',
@@ -390,6 +413,21 @@ describe('api/endpoints', () => {
           available_from: '2026-05-27T00:00:00.000Z',
           available_until: '2026-05-28T00:00:00.000Z',
         }),
+      }),
+    )
+  })
+
+  it('keeps longer timeout and numeric visibility when saving a teacher template', async () => {
+    await saveTeacherTemplate({
+      title: 'private template',
+      segments: ['Bonjour.'],
+      isPublic: 2,
+    })
+    expect(request).toHaveBeenCalledWith(
+      'teacher/task/save',
+      expect.objectContaining({
+        timeoutMs: 120_000,
+        body: expect.objectContaining({ is_public: 2 }),
       }),
     )
   })
@@ -588,7 +626,12 @@ describe('api/endpoints', () => {
       'admin/user/edit',
       expect.objectContaining({
         method: 'POST',
-        body: expect.objectContaining({ user_id: 21, user_type: 'Teacher' }),
+        body: expect.objectContaining({
+          user_id: 21,
+          user_type: 'Teacher',
+          username: '张老师',
+          student_staff_id: 'T1001',
+        }),
       }),
     )
   })

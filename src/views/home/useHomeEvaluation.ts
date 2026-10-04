@@ -76,6 +76,15 @@ let playbackToken = 0
 const ttsPreparing = ref(false)
 // create session 的并发去重：预加载与手动朗读同时触发时只创建一次
 let sessionPromise: Promise<string> | null = null
+let sessionGeneration = 0
+
+const invalidateSession = () => {
+  sessionGeneration += 1
+  sessionPromise = null
+  sessionId.value = null
+  ttsPreparing.value = false
+  return sessionGeneration
+}
 
 let recorder: MediaRecorder | null = null
 let stream: MediaStream | null = null
@@ -178,7 +187,9 @@ export function useHomeEvaluation() {
   const progressPercent = computed(() =>
     sentences.value.length ? Math.round((completedCount.value / sentences.value.length) * 100) : 0,
   )
-  const canRecord = computed(() => !!currentSentence.value && !recording.value && !analyzing.value && !submitLoading.value)
+  const canRecord = computed(() =>
+    !!currentSentence.value && !recording.value && !analyzing.value && !submitLoading.value && !ttsPreparing.value,
+  )
   const canStopRecording = computed(() => recording.value && recordingElapsedMs.value >= MIN_RECORDING_MS)
   const canSubmit = computed(() => !!sessionId.value && allSentencesCompleted.value && !recording.value && !analyzing.value && !submitLoading.value)
 
@@ -241,6 +252,8 @@ const splitSentences = async () => {
       toast.push('请先输入评测文本', 'warning')
       return
     }
+    stopAudio()
+    const generation = invalidateSession()
     const parts = (raw.match(/[^。.!！?？;；\n\r]+[。.!！?？;；]*/g) ?? [])
       .map((s) => s.trim())
       .filter(Boolean)
@@ -249,19 +262,14 @@ const splitSentences = async () => {
     results.value = sentences.value.map(() => blankResult())
     // 演示：分句后立即给含 vingt-trois 的 mock 长句带上一份评测明细，直接预览右下角效果
     applyMockSentenceResult()
-    sessionId.value = null
     submitResult.value = null
     toast.push(`智能分句完成，共 ${sentences.value.length} 句`, 'success')
-    // 分句后立刻创建 session：后端此时会合成逐句参考音频，后续逐句朗读无需等待
-    ttsPreparing.value = true
-    try {
-      await ensureSession()
-    } catch (error) {
+    // 参考音频在后台准备，避免 Azure TTS 延迟阻塞本地分句和文本编辑。
+    void ensureSession().catch((error) => {
+      if (generation !== sessionGeneration) return
       const message = error instanceof Error ? error.message : '参考音频预加载失败'
       toast.push(`参考音频预加载失败：${message}`, 'error')
-    } finally {
-      ttsPreparing.value = false
-    }
+    })
   }
 
   const selectSentence = (index: number) => {
@@ -273,18 +281,25 @@ const splitSentences = async () => {
     if (sessionId.value) return sessionId.value
     // 分句预加载与用户点击朗读/录音几乎同时触发时，复用同一次 create session 请求
     if (sessionPromise) return sessionPromise
+    const generation = sessionGeneration
+    const segments = [...sentences.value]
+    ttsPreparing.value = true
     sessionPromise = (async () => {
       const language = await loadStudentLanguage()
       // 主页自由评测后端需要 segments（分句结果）与 language 来合成参考音频，
       // 缺失会返回 400「缺少必要字段」。
-      const res = await createStudentTestSession(null, sentences.value, language)
-      sessionId.value = res.session_id
+      const res = await createStudentTestSession(null, segments, language)
+      if (generation === sessionGeneration) sessionId.value = res.session_id
       return res.session_id
     })()
+    const pendingSession = sessionPromise
     try {
-      return await sessionPromise
+      return await pendingSession
     } finally {
-      sessionPromise = null
+      if (sessionPromise === pendingSession) {
+        sessionPromise = null
+        ttsPreparing.value = false
+      }
     }
   }
 
@@ -400,6 +415,7 @@ const splitSentences = async () => {
 
   const startRecording = async () => {
     if (!canRecord.value) return
+    const generation = sessionGeneration
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       toast.push('当前浏览器不支持录音，请换用 Chrome 或 Edge 测试。', 'error')
       return
@@ -409,9 +425,14 @@ const splitSentences = async () => {
       stopAudio()
       submitResult.value = null
       await ensureSession()
+      if (generation !== sessionGeneration) return
       recordedChunks = []
       discardRecordingOnStop = false
       const nextStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (generation !== sessionGeneration) {
+        nextStream.getTracks().forEach((track) => track.stop())
+        return
+      }
       stream = nextStream
       const preferredType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : ''
       const nextRecorder = preferredType ? new MediaRecorder(nextStream, { mimeType: preferredType }) : new MediaRecorder(nextStream)
@@ -553,6 +574,7 @@ const splitSentences = async () => {
 
   const cleanup = () => {
     discardRecordingOnStop = true
+    invalidateSession()
     if (recorder?.state === 'recording') recorder.stop()
     resetRecordingTimer()
     stopStream()

@@ -765,6 +765,13 @@ export async function resolveMock(
       { task_id: 'task-2', title: '元音发音练习 #11', finished_students_count: 15, unfinished_students: [{ user_id: 1, username: 'student', stu_id: 'STU2024001' }] },
     ]
   }
+  if (m === 'POST' && p === '/teacher/class/problem_areas') {
+    return {
+      phonemes: [{ phoneme: 'ʁ', score: 68 }],
+      words: [{ word: 'Bonjour', score: 74 }],
+      sentences: [],
+    }
+  }
   if (m === 'POST' && p === '/teacher/class/students') return STUDENTS
   if (m === 'POST' && p === '/teacher/student/basic_information') return SCORE_SUMMARY
   if (m === 'POST' && p === '/teacher/student/records') {

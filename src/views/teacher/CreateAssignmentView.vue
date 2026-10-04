@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getTeacherClasses, getTeacherTemplates, publishTeacherTask, saveTeacherTemplate, segmentTeacherContent, type TaskMode, type TeacherClassItem } from '../../api/endpoints'
 import { useAsync } from '../../composables/useAsync'
@@ -22,19 +22,16 @@ const maxSubmissions = ref<number | null>(3)
 const selectedMode = ref<TaskMode>('sentence')
 const taskType = ref<'homework' | 'practice'>('homework')
 const segmentedSentences = ref<string[]>([])
-const segmentEditorOpen = ref(false)
 const segmentDraft = ref<string[]>([])
 /** 确认弹窗中当前选中的行索引，用于在选中行下方插入新行 */
 const selectedSegmentIndex = ref<number | null>(null)
 const classes = ref<TeacherClassItem[]>([])
 const selectedClassIds = ref<string[]>([])
 const notes = ref('')
-/** 保存为校本练习时是否同校公开 */
-const templatePublic = ref(true)
+/** 保存为校本练习时的可见范围：1 同校公开 / 2 仅自己可复用 / 0 不复用 */
+const templatePublic = ref<number | null>(null)
 /** 内容经「确认分句」弹窗确认后才为 true，避免未确认就直接保存 */
 const segmentsConfirmed = ref(false)
-/** 弹窗确认后需要继续执行的动作 */
-const pendingAction = ref<'publish' | 'template' | null>(null)
 /** 从校本练习布置进来时记录来源模板 id（用于复用模板、避免重复保存） */
 const sourceTemplateId = ref<string | null>(null)
 /** 来源模板的标题+句子指纹，用于判断内容是否被修改 */
@@ -44,6 +41,9 @@ const DEFAULT_DURATION_MS = 7 * 24 * 60 * 60 * 1000
 const PRACTICE_UNTIL_ISO = new Date('2099-12-31T23:59:00').toISOString()
 type TimeField = 'from' | 'until'
 type CalendarPanel = 'date' | 'year' | 'month'
+
+const currentPage = ref(1);
+const editing = ref(false);
 
 const toDateTimeInput = (date: Date) => {
   const pad = (value: number) => String(value).padStart(2, '0')
@@ -119,6 +119,8 @@ const modeCopy: Record<TaskMode, {
 
 const modeText = computed(() => modeCopy[selectedMode.value])
 
+const input = useTemplateRef<HTMLInputElement[]>('segmentDraftref')
+
 /** 句子模式下由后端分句接口切分 */
 const segmentByBackend = async (text: string): Promise<string[]> => {
   try {
@@ -158,32 +160,36 @@ const segmentedText = ref('')
 const onSegment = () => {
   const text = contentText.value.trim()
   if (!text) return
-  if (text === segmentSource.value) return
   segmentsConfirmed.value = false
   // 失焦时只静默切分，不弹确认窗；确认窗仅在保存/发布时由 ensureSegmentsConfirmed 打开
-  void segment(false)
+  void segment()
 }
 
-/** 用新结果覆盖分句；仅在结果变化时弹出可修改确认窗口，避免每次失焦都弹 */
-const applySegments = (next: string[], openEditor = true) => {
-  const changed = next.join('\n') !== segmentedSentences.value.join('\n')
+/** 用新结果覆盖分句；仅在结果变化时保留草稿，避免每次失焦都覆盖 */
+const applySegments = (next: string[]) => {
+  const changed = next.join('\n') !== segmentedSentences.value.join('\n') || next.join('\n') !== segmentDraft.value.join('\n')
   segmentedSentences.value = next
   if (changed) segmentsConfirmed.value = false
-  if (openEditor && changed && next.length) {
+  if (changed && next.length) {
     segmentDraft.value = [...next]
     selectedSegmentIndex.value = null
-    segmentEditorOpen.value = true
   }
 }
 
 const addSegmentDraft = () => {
   segmentDraft.value.push('')
+  const index = segmentDraft.value.length - 1
+  selectedSegmentIndex.value = index
+  setTimeout(() => {
+    input.value?.[index]?.focus()
+  }, 10)
 }
 
 /** 在选中的一行下方插入空白行，并选中新行 */
 const insertSegmentDraftBelow = (index: number) => {
   segmentDraft.value.splice(index + 1, 0, '')
   selectedSegmentIndex.value = index + 1
+  input.value?.[index + 1]?.focus()
 }
 
 const removeSegmentDraft = (index: number) => {
@@ -191,32 +197,6 @@ const removeSegmentDraft = (index: number) => {
   if (selectedSegmentIndex.value === null) return
   if (selectedSegmentIndex.value === index) selectedSegmentIndex.value = null
   else if (selectedSegmentIndex.value > index) selectedSegmentIndex.value -= 1
-}
-
-/** 取消：关闭弹窗并放弃待执行动作，不改变 segmentedSentences */
-const cancelSegmentDraft = () => {
-  segmentEditorOpen.value = false
-  selectedSegmentIndex.value = null
-  pendingAction.value = null
-}
-
-const confirmSegmentDraft = () => {
-  const cleaned = segmentDraft.value.map((item) => item.trim()).filter(Boolean)
-  if (!cleaned.length) {
-    toast.push('请至少保留一条内容', 'warning')
-    return
-  }
-  segmentedSentences.value = cleaned
-  segmentsConfirmed.value = true
-  segmentSource.value = contentText.value.trim()
-  segmentedText.value = contentText.value.trim()
-  segmentEditorOpen.value = false
-  selectedSegmentIndex.value = null
-  // 确认后继续执行此前被拦下的保存/发布动作，避免教师再点一次
-  const action = pendingAction.value
-  pendingAction.value = null
-  if (action === 'publish') void onPublish()
-  else if (action === 'template') void saveAsTemplate()
 }
 
 const maxSubmissionsInput = (event: Event) => {
@@ -413,7 +393,7 @@ const toIso = (value: string) => {
   return new Date(value).toISOString()
 }
 
-const segment = async (openEditor = true) => {
+const segment = async () => {
   const text = contentText.value.trim()
   if (!text) {
     segmentedSentences.value = []
@@ -426,7 +406,7 @@ const segment = async (openEditor = true) => {
   if (selectedMode.value === 'word') next = splitWords(text)
   else if (selectedMode.value === 'pair') next = splitPairs(text)
   else next = await segmentByBackend(text)
-  applySegments(next, openEditor)
+  applySegments(next)
   // 只有切分结果真正落地后才标记已同步，避免内容刚改动就用旧结果发布
   segmentedText.value = text
 }
@@ -450,15 +430,13 @@ const publish = async () => {
     toast.push('请输入任务标题', 'warning')
     return
   }
-  // 内容未确认先弹「确认分句」窗口，确认后自动继续发布，无需再点一次
-  if (!(await ensureSegmentsConfirmed('publish'))) return
   await doPublish()
 }
 
 /** 当前编辑态的模板指纹（模板标题 + 分句），用于判断相对来源模板是否被修改 */
 const currentTemplateSignature = computed(() => JSON.stringify([
   templateTitle.value.trim(),
-  segmentedSentences.value,
+  segmentDraft.value,
 ]))
 
 /** 从校本练习进入且未做任何修改 */
@@ -467,26 +445,6 @@ const isTemplateUnchanged = computed(() =>
   && sourceTemplateSignature.value !== null
   && currentTemplateSignature.value === sourceTemplateSignature.value,
 )
-
-/** 从校本练习进入且未修改时，禁止重复保存为校本练习 */
-const canSaveAsTemplate = computed(() => !isTemplateUnchanged.value)
-
-/** 确保内容已切分且经教师确认；未确认时弹出确认窗口并记下待执行动作 */
-const ensureSegmentsConfirmed = async (action: 'publish' | 'template'): Promise<boolean> => {
-  // 内容已改动但切分结果还没跟上（例如刚失焦、分句接口未返回）时，先重新切分
-  if (contentText.value.trim() !== segmentedText.value || !segmentedSentences.value.length) {
-    await segment(false)
-  }
-  if (!segmentedSentences.value.length) {
-    toast.push('请输入练习内容', 'warning')
-    return false
-  }
-  if (segmentsConfirmed.value) return true
-  pendingAction.value = action
-  segmentDraft.value = [...segmentedSentences.value]
-  segmentEditorOpen.value = true
-  return false
-}
 
 const doPublish = async () => {
   const isPractice = taskType.value === 'practice'
@@ -524,7 +482,6 @@ const doPublish = async () => {
 }
 
 const saveAsTemplate = async () => {
-  if (!(await ensureSegmentsConfirmed('template'))) return
   await doSaveTemplate()
 }
 
@@ -534,13 +491,32 @@ const doSaveTemplate = async () => {
     toast.push('请输入练习标题', 'warning')
     return
   }
+  for (let i = 0; i < segmentDraft.value.length; i += 1) {
+    if (segmentDraft.value[i] === '') {
+      toast.push('任意一行不得为空', 'warning');
+      return;
+    }
+  }
+  if (editing.value && isTemplateUnchanged.value) {
+    toast.push('该内容与原内容相同，无法保存', 'warning');
+    return;
+  }
   try {
     await templateReq.run(() => saveTeacherTemplate({
       title: templateName,
       segments: segmentedSentences.value,
-      isPublic: templatePublic.value,
+      // 可见范围：0 不复用 / 1 同校公开 / 2 仅自己可复用，直接下发整型
+      isPublic: templatePublic.value ?? 0,
     }))
-    toast.push(templatePublic.value ? '已保存为校本练习（同校公开）' : '已保存为校本练习（仅自己可见）', 'success')
+    toast.push(
+      templatePublic.value === 1
+        ? '已保存为校本练习（同校公开）'
+        : templatePublic.value === 2
+          ? '已保存为校本练习（仅自己可复用）'
+          : '已保存为校本练习（不复用）',
+      'success',
+    )
+    await router.push('/teacher/templates')
   } catch {
     toast.push(templateReq.error.value ?? '保存校本练习失败，请稍后重试', 'error')
   }
@@ -572,6 +548,7 @@ const loadTemplateFromQuery = async () => {
     templateTitle.value = template.title
     contentText.value = template.segments.join('\n')
     segmentedSentences.value = [...template.segments]
+    segmentDraft.value = [...template.segments]
     // 模板带入的内容视为已确认，避免点保存时又弹一次确认窗口
     segmentsConfirmed.value = true
     // 记录来源模板，未修改内容时复用该模板、禁止重复保存为校本练习
@@ -580,9 +557,79 @@ const loadTemplateFromQuery = async () => {
     // 同步切分来源，避免内容区失焦时重新切分覆盖带入的结果
     segmentSource.value = contentText.value.trim()
     segmentedText.value = contentText.value.trim()
+    currentPage.value = 0;
   } catch {
     toast.push('校本练习内容加载失败，请稍后重试', 'error')
   }
+}
+
+const editContent = () => {
+  currentPage.value = 1;
+  editing.value = true;
+}
+
+const nextPage = () => {
+  if (currentPage.value == 0) {
+    if (!editing.value) {
+      currentPage.value = 3;
+      return;
+    }
+  }
+  if (currentPage.value == 1) {
+    if (!contentText.value || !templateTitle.value) {
+      toast.push('请输入练习内容', 'warning');
+      return;
+    }
+    if (templatePublic.value == null) {
+      toast.push('请选择可见范围', 'warning');
+      return;
+    }
+    if (contentText.value.trim() !== segmentedText.value || segmentedSentences.value.join('\n') !== segmentDraft.value.join('\n')) {
+      onSegment();
+    }
+  }
+  if (currentPage.value == 2) {
+    const cleaned = segmentDraft.value.map((item) => item.trim()).filter(Boolean)
+    if (!cleaned.length) {
+      toast.push('请至少保留一条内容', 'warning')
+      return
+    }
+    for (let i = 0; i < segmentDraft.value.length; i += 1) {
+      if (segmentDraft.value[i] === '') {
+        toast.push('任意一行不得为空', 'warning');
+        return;
+      }
+    }
+    if (editing.value && isTemplateUnchanged.value) {
+      toast.push('该内容与原内容相同，系统将忽略本次编辑', 'warning')
+      editing.value = false;
+    }
+  }
+  currentPage.value += 1;
+}
+
+const prevPage = () => {
+  if (currentPage.value == 3) {
+    if (sourceTemplateId.value && isTemplateUnchanged.value && !editing.value) {
+      currentPage.value = 0;
+      return;
+    }
+  }
+  currentPage.value -= 1;
+}
+
+const exitEdit = () => {
+  editing.value = false;
+  currentPage.value = 0;
+}
+
+const onInputBlur = (idx: number) => {
+  setTimeout(() => {
+    if (selectedSegmentIndex.value == idx)
+      setTimeout(() => {
+        selectedSegmentIndex.value = null;
+      }, 10);
+  }, 200);
 }
 
 onMounted(() => {
@@ -595,7 +642,7 @@ onMounted(() => {
   <div class="p-8 flex gap-6">
     <div class="flex-1 flex flex-col gap-6">
       <div class="flex flex-col gap-6">
-        <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
+        <div v-if="currentPage == 3" class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
           <div class="flex flex-col gap-4">
             <h3 class="text-sm font-black text-[#1F2937]">任务基础信息</h3>
             <div class="flex flex-col gap-2">
@@ -639,48 +686,97 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="grid grid-cols-3 gap-0">
-          <div
-            v-for="mode in modes"
-            :key="mode.id"
-            class="relative group"
-          >
-            <div
-              :class="[
-                'h-full bg-white rounded-xl p-6 flex flex-col gap-2 transition-colors border shadow-[0px_4px_20px_rgba(0,0,0,0.04)]',
-                mode.disabled
-                  ? 'cursor-not-allowed bg-[#F8FAFC] opacity-60 border-[#F1F5F9]'
-                  : selectedMode === mode.id
-                    ? 'cursor-pointer border-[#356B00] border-2'
-                    : 'cursor-pointer border-[#F1F5F9] hover:border-[#58CC02]/20',
-              ]"
-              @click="onModeSelect(mode.id)"
+        <div v-if="currentPage == 1" class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
+          <div class="flex flex-col gap-2">
+		    <span class="text-xs font-black text-[#64748B]">练习标题（教师看到）</span>
+		    <input
+		  	  v-model="templateTitle"
+			  type="text"
+			  placeholder="练习标题，留空则用任务标题"
+			  class="w-full px-4 py-3 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
+		    />
+		  </div>
+		  <div class="flex flex-col gap-2">
+		    <span class="text-xs font-black text-[#64748B]">校本练习可见范围</span>
+		    <div class="flex items-center gap-2">
+			  <button
+			    type="button"
+			    :class="[
+				  'px-3 py-2 rounded-lg border text-xs font-black transition-colors',
+				  templatePublic == 1
+				    ? 'bg-[#356B00] border-[#356B00] text-white'
+				    : 'bg-white border-[#E2E8F0] text-[#64748B] hover:border-[#58CC02]',
+			    ]"
+			    @click="templatePublic = 1"
+			  >
+			    同校公开
+			  </button>
+			  <button
+			    type="button"
+			    :class="[
+				  'px-3 py-2 rounded-lg border text-xs font-black transition-colors',
+				  templatePublic == 2
+				    ? 'bg-[#356B00] border-[#356B00] text-white'
+				    : 'bg-white border-[#E2E8F0] text-[#64748B] hover:border-[#58CC02]',
+			    ]"
+			    @click="templatePublic = 2"
+			  >
+			    仅自己可复用
+			  </button>
+			  <button
+			    type="button"
+			    :class="[
+				  'px-3 py-2 rounded-lg border text-xs font-black transition-colors',
+				  templatePublic == 0
+				    ? 'bg-[#356B00] border-[#356B00] text-white'
+				    : 'bg-white border-[#E2E8F0] text-[#64748B] hover:border-[#58CC02]',
+			    ]"
+			    @click="templatePublic = 0"
+			  >
+			    不复用
+			  </button>
+		    </div>
+		  </div>
+		  <div class="grid grid-cols-3 gap-3">
+		    <div
+              v-for="mode in modes"
+              :key="mode.id"
+              class="relative group"
             >
-              <h3
-                class="text-sm font-black"
-                :class="mode.disabled ? 'text-[#9CA3AF]' : 'text-[#1F2937]'"
+              <div
+                :class="[
+                  'h-full bg-white rounded-xl p-6 flex flex-col gap-2 transition-colors border shadow-[0px_4px_20px_rgba(0,0,0,0.04)]',
+                  mode.disabled
+                    ? 'cursor-not-allowed bg-[#F8FAFC] opacity-60 border-[#F1F5F9]'
+                    : selectedMode === mode.id
+                      ? 'cursor-pointer border-[#356B00] border-2'
+                      : 'cursor-pointer border-[#F1F5F9] hover:border-[#58CC02]/20',
+                ]"
+                @click="onModeSelect(mode.id)"
               >
-                {{ mode.label }}
-              </h3>
-              <p class="text-xs font-bold" :class="mode.disabled ? 'text-[#CBD5E1]' : 'text-[#9CA3AF]'">{{ mode.desc }}</p>
+                <h3
+                  class="text-sm font-black"
+                  :class="mode.disabled ? 'text-[#9CA3AF]' : 'text-[#1F2937]'"
+                >
+                  {{ mode.label }}
+                </h3>
+                <p class="text-xs font-bold" :class="mode.disabled ? 'text-[#CBD5E1]' : 'text-[#9CA3AF]'">{{ mode.desc }}</p>
+                <span
+                  v-if="mode.disabled"
+                  class="w-fit px-2 py-0.5 rounded-full bg-[#E5E7EB] text-[10px] font-black text-[#6B7280]"
+                >
+                  开发中
+                </span>
+              </div>
               <span
                 v-if="mode.disabled"
-                class="w-fit px-2 py-0.5 rounded-full bg-[#E5E7EB] text-[10px] font-black text-[#6B7280]"
+                class="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-30 w-max max-w-[220px] rounded-lg bg-[#1F2937] px-3 py-2 text-xs font-bold leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
               >
-                开发中
+                {{ MODE_DISABLED_HINT }}
               </span>
             </div>
-            <span
-              v-if="mode.disabled"
-              class="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-30 w-max max-w-[220px] rounded-lg bg-[#1F2937] px-3 py-2 text-xs font-bold leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100"
-            >
-              {{ MODE_DISABLED_HINT }}
-            </span>
           </div>
-        </div>
-
-        <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
-          <div class="flex items-center gap-3">
+		  <div class="flex items-center gap-3">
             <span class="text-sm font-black text-[#1F2937]">内容文本</span>
             <span class="text-xs font-bold text-[#9CA3AF]">{{ modeText.contentHint }}</span>
           </div>
@@ -688,480 +784,454 @@ onMounted(() => {
             v-model="contentText"
             class="w-full h-44 rounded-xl border border-[#E2E8F0] p-4 text-sm text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02] resize-none"
             :placeholder="modeText.contentPlaceholder"
-            @blur="onSegment"
           />
         </div>
 
-        <div v-if="taskType === 'homework'" class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
-          <div class="flex flex-col gap-4">
-            <h3 class="text-sm font-black text-[#1F2937]">开放时间与提交次数</h3>
-            <div class="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 flex flex-col gap-3">
-              <div class="flex items-center justify-between gap-3">
-                <span class="text-xs font-black text-[#64748B] uppercase tracking-widest">时间设置</span>
-                <span
-                  :class="[
-                    'text-xs font-bold',
-                    isTimeRangeInvalid ? 'text-[#BA1A1A]' : 'text-[#356B00]',
-                  ]"
-                >
-                  {{ timeRangeHint }}
-                </span>
-              </div>
-              <div class="grid grid-cols-2 gap-3">
-                <div
-                  v-for="field in timeFieldConfigs"
-                  :key="field.id"
-                  class="relative flex flex-col gap-1"
-                >
-                  <span class="flex items-center justify-between gap-2 h-7">
-                    <span class="text-xs font-bold text-[#9CA3AF]">{{ field.label }}</span>
-                    <span class="flex items-center gap-1.5">
-                      <button
-                        v-if="field.id === 'from'"
-                        type="button"
-                        class="px-2.5 py-1 rounded-md bg-white border border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
-                        @click="setAvailableFromNow"
-                      >
-                        现在
-                      </button>
-                      <button
-                        v-if="getTimeValue(field.id)"
-                        type="button"
-                        class="px-2.5 py-1 rounded-md bg-white border border-[#E2E8F0] text-xs font-black text-[#64748B] hover:bg-[#F8FAFC] transition-colors"
-                        @click="clearTimeField(field.id)"
-                      >
-                        清空
-                      </button>
-                    </span>
-                  </span>
-
-                  <button
-                    type="button"
-                    :class="[
-                      'w-full px-4 py-3 rounded-lg border bg-white text-left text-sm font-bold text-[#1F2937] outline-none hover:border-[#58CC02] transition-colors flex items-center justify-between gap-3',
-                      field.id === 'until' && isTimeRangeInvalid ? 'border-[#BA1A1A]' : 'border-[#E2E8F0]',
-                      activeTimeField === field.id ? 'ring-2 ring-[#D7E5C8] border-[#58CC02]' : '',
-                    ]"
-                    @click="openTimePicker(field.id)"
-                  >
-                    <span>{{ formatDisplayDateTime(getTimeValue(field.id)) }}</span>
-                    <span class="text-[#9CA3AF]">▾</span>
-                  </button>
-
-                  <div
-                    v-if="activeTimeField === field.id"
-                    :class="[
-                      'absolute z-30 top-[calc(100%+8px)] w-[520px] rounded-xl border border-[#E2E8F0] bg-white shadow-[0px_24px_70px_rgba(15,23,42,0.16)] p-4',
-                      field.id === 'until' ? 'right-0' : 'left-0',
-                    ]"
-                  >
-                    <div class="flex items-center justify-between gap-3 mb-4">
-                      <div>
-                        <p class="text-sm font-black text-[#1F2937]">{{ field.label }}</p>
-                        <p class="text-xs font-bold text-[#9CA3AF] mt-0.5">{{ formatDisplayDateTime(getTimeValue(field.id)) }}</p>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <button
-                          type="button"
-                          class="w-8 h-8 rounded-lg border border-[#E2E8F0] text-[#64748B] font-black hover:bg-[#F8FAFC]"
-                          @click="shiftCalendarView(-1)"
-                        >
-                          ‹
-                        </button>
-                        <span
-                          v-if="calendarPanel !== 'date'"
-                          class="min-w-28 text-center text-sm font-black text-[#1F2937]"
-                        >
-                          {{ calendarNavTitle }}
-                        </span>
-                        <span v-else class="min-w-28 flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            class="px-2 py-1 rounded-md text-sm font-black text-[#1F2937] hover:bg-[#F8FAFC]"
-                            @click="calendarPanel = 'year'"
-                          >
-                            {{ calendarMonth.getFullYear() }}年
-                          </button>
-                          <button
-                            type="button"
-                            class="px-2 py-1 rounded-md text-sm font-black text-[#1F2937] hover:bg-[#F8FAFC]"
-                            @click="calendarPanel = 'month'"
-                          >
-                            {{ calendarMonth.getMonth() + 1 }}月
-                          </button>
-                        </span>
-                        <button
-                          type="button"
-                          class="w-8 h-8 rounded-lg border border-[#E2E8F0] text-[#64748B] font-black hover:bg-[#F8FAFC]"
-                          @click="shiftCalendarView(1)"
-                        >
-                          ›
-                        </button>
-                      </div>
-                    </div>
-
-                    <div
-                      :class="[
-                        calendarPanel === 'date'
-                          ? 'grid grid-cols-[minmax(0,1fr)_160px] gap-4'
-                          : 'block',
-                      ]"
-                    >
-                      <div>
-                        <div v-if="calendarPanel === 'year'" class="grid grid-cols-3 gap-2">
-                          <button
-                            v-for="year in yearOptions"
-                            :key="year"
-                            type="button"
-                            :class="[
-                              'h-12 rounded-lg text-sm font-black transition-colors',
-                              year === calendarMonth.getFullYear()
-                                ? 'bg-[#356B00] text-white'
-                                : 'text-[#1F2937] hover:bg-[#F8FAFC]',
-                            ]"
-                            @click="selectCalendarYear(year)"
-                          >
-                            {{ year }}
-                          </button>
-                        </div>
-
-                        <div v-else-if="calendarPanel === 'month'" class="grid grid-cols-3 gap-2">
-                          <button
-                            v-for="(month, index) in monthOptions"
-                            :key="month"
-                            type="button"
-                            :class="[
-                              'h-12 rounded-lg text-sm font-black transition-colors',
-                              index === calendarMonth.getMonth()
-                                ? 'bg-[#356B00] text-white'
-                                : 'text-[#1F2937] hover:bg-[#F8FAFC]',
-                            ]"
-                            @click="selectCalendarMonth(index)"
-                          >
-                            {{ month }}
-                          </button>
-                        </div>
-
-                        <template v-else>
-                          <div class="grid grid-cols-7 gap-1 mb-2">
-                            <span
-                              v-for="day in weekDays"
-                              :key="day"
-                              class="h-7 flex items-center justify-center text-xs font-black text-[#94A3B8]"
-                            >
-                              {{ day }}
-                            </span>
-                          </div>
-                          <div class="grid grid-cols-7 gap-1">
-                            <button
-                              v-for="day in calendarDays"
-                              :key="day.key"
-                              type="button"
-                              :class="[
-                                'h-9 rounded-lg text-sm font-bold transition-colors',
-                                day.isSelected
-                                  ? 'bg-[#356B00] text-white'
-                                  : day.inRange
-                                    ? 'bg-[#E6F4D8] text-[#356B00]'
-                                    : day.isToday
-                                      ? 'bg-[#F2F5E8] text-[#356B00]'
-                                      : day.inMonth
-                                        ? 'text-[#1F2937] hover:bg-[#F8FAFC]'
-                                        : 'text-[#CBD5E1] hover:bg-[#F8FAFC]',
-                              ]"
-                              @click="selectCalendarDate(day.date)"
-                            >
-                              {{ day.day }}
-                            </button>
-                          </div>
-                        </template>
-                      </div>
-
-                      <div v-if="calendarPanel === 'date'" class="grid grid-cols-2 gap-2">
-                        <div class="flex flex-col gap-2">
-                          <span class="text-xs font-black text-[#94A3B8] text-center">时</span>
-                          <div class="max-h-64 overflow-y-auto rounded-lg bg-[#F8FAFC] p-1">
-                            <button
-                              v-for="hour in hourOptions"
-                              :key="hour"
-                              type="button"
-                              :class="[
-                                'w-full h-8 rounded-md text-xs font-black transition-colors',
-                                activeDateTime?.getHours() === hour
-                                  ? 'bg-[#356B00] text-white'
-                                  : 'text-[#475569] hover:bg-white',
-                              ]"
-                              @click="setTimePart('hour', hour)"
-                            >
-                              {{ String(hour).padStart(2, '0') }}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div class="flex flex-col gap-2">
-                          <span class="text-xs font-black text-[#94A3B8] text-center">分</span>
-                          <div class="max-h-64 overflow-y-auto rounded-lg bg-[#F8FAFC] p-1">
-                            <button
-                              v-for="minute in minuteOptions"
-                              :key="minute"
-                              type="button"
-                              :class="[
-                                'w-full h-8 rounded-md text-xs font-black transition-colors',
-                                activeDateTime?.getMinutes() === minute
-                                  ? 'bg-[#356B00] text-white'
-                                  : 'text-[#475569] hover:bg-white',
-                              ]"
-                              @click="setTimePart('minute', minute)"
-                            >
-                              {{ String(minute).padStart(2, '0') }}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-[#F1F5F9]">
-                      <div class="flex items-center gap-1">
-                        <button
-                          type="button"
-                          class="px-3 py-2 rounded-lg text-xs font-black text-[#356B00] hover:bg-[#F2F5E8]"
-                          @click="useTodayForActiveField"
-                        >
-                          今天
-                        </button>
-                        <button
-                          v-if="activeTimeField && getTimeValue(activeTimeField)"
-                          type="button"
-                          class="px-3 py-2 rounded-lg text-xs font-black text-[#64748B] hover:bg-[#F8FAFC]"
-                          @click="clearTimeField(activeTimeField)"
-                        >
-                          清空
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        class="px-4 py-2 rounded-lg bg-[#356B00] text-xs font-black text-white hover:bg-[#2E5E00]"
-                        @click="activeTimeField = null"
-                      >
-                        确定
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="flex items-center gap-3">
-              <span class="text-xs font-bold text-[#9CA3AF]">最大提交次数</span>
-              <input
-                :value="maxSubmissions ?? ''"
-                type="number"
-                min="1"
-                max="99"
-                placeholder="不限"
-                class="w-20 px-3 py-3 rounded-lg border border-[#E2E8F0] text-sm text-center font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
-                @input="maxSubmissionsInput"
-              />
-              <span class="text-xs font-bold text-[#9CA3AF]">留空表示不限次数</span>
-            </div>
+		<div v-if="currentPage == 0" class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
+          <div class="flex flex-col gap-2">
+		    <span class="text-xs font-black text-[#64748B]">练习标题（教师看到）</span>
+		    <span class="text-xs font-black text-[#64748B]">{{ templateTitle }}</span>
+		  </div>
+		  <div class="flex items-center gap-3">
+            <span class="text-sm font-black text-[#1F2937]">内容文本</span>
           </div>
+          <template v-for="(_segment, idx) in segmentedSentences" :key="idx">
+			<div
+			  class="flex items-center gap-2 rounded-lg transition-colors"
+			>
+			  <span class="text-xs font-black text-[#9CA3AF] w-8 shrink-0 pl-1">#{{ idx + 1 }}</span>
+			  <div
+				class="flex-1 px-3 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
+			  >
+			    {{segmentedSentences[idx]}}
+			  </div>
+			</div>
+		  </template>
         </div>
+
+		<div v-if="currentPage == 3" class="flex justify-between gap-6">
+
+			<div class="flex-grow-1 bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
+			<div class="flex items-center justify-between gap-3">
+			  <span class="text-sm font-black text-[#1F2937]">班级信息</span>
+			  <button
+				type="button"
+				class="px-3 py-1.5 rounded-lg border border-[#E2E8F0] bg-white text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] disabled:text-[#CBD5E1] disabled:hover:bg-white transition-colors"
+				:disabled="!hasClasses || classesReq.loading.value"
+				@click="toggleAllClasses"
+			  >
+				{{ allClassesSelected ? '取消全选' : '全选班级' }}
+			  </button>
+			</div>
+			<div v-if="classesReq.loading.value" class="text-xs font-bold text-[#9CA3AF]">班级加载中...</div>
+			<div v-else class="flex flex-col gap-2 max-h-52 overflow-y-auto pr-1">
+			  <label
+				v-for="item in classes"
+				:key="item.class_id"
+				class="flex items-center gap-3 rounded-lg border border-[#E2E8F0] px-3 py-2 cursor-pointer hover:border-[#58CC02]"
+			  >
+				<input
+				  v-model="selectedClassIds"
+				  type="checkbox"
+				  :value="item.class_id"
+				  class="accent-[#356B00]"
+				/>
+				<div class="me-auto truncate text-sm font-black text-[#1F2937]">{{ item.class_name }}</div>
+				<div class="flex text-xs font-bold text-[#9CA3AF]">{{ item.student_count }}名学生 · {{ item.task_count }}个任务</div>
+			  </label>
+			</div>
+			<div class="flex items-center gap-3">
+			  <div class="w-10 h-10 rounded-full bg-[#F2F5E8] flex items-center justify-center">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#356B00" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+			  </div>
+			  <div>
+				<p class="text-sm font-black text-[#1F2937]">已选 {{ selectedClassIds.length }} 个班级</p>
+				<p class="text-xs font-bold text-[#9CA3AF]">{{ selectedStudentCount }}名学生</p>
+			  </div>
+			</div>
+			</div>
+
+			<div class="flex-grow-1 bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
+			  <div class="flex flex-col gap-4">
+				<h3 class="text-sm font-black text-[#1F2937]">开放时间与提交次数</h3>
+				<div class="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 flex flex-col gap-3">
+				  <div class="flex items-center justify-between gap-3">
+					<span class="text-xs font-black text-[#64748B] uppercase tracking-widest">时间设置</span>
+					<span
+					  :class="[
+						'text-xs font-bold',
+						isTimeRangeInvalid ? 'text-[#BA1A1A]' : 'text-[#356B00]',
+					  ]"
+					>
+					  {{ timeRangeHint }}
+					</span>
+				  </div>
+				  <div class="grid grid-cols-2 gap-3">
+					<div
+					  v-for="field in timeFieldConfigs"
+					  :key="field.id"
+					  class="relative flex flex-col gap-1"
+					>
+					  <span class="flex items-center justify-between gap-2 h-7">
+						<span class="text-xs font-bold text-[#9CA3AF]">{{ field.label }}</span>
+						<span class="flex items-center gap-1.5">
+						  <button
+							v-if="field.id === 'from'"
+							type="button"
+							class="px-2.5 py-1 rounded-md bg-white border border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
+							@click="setAvailableFromNow"
+						  >
+							现在
+						  </button>
+						  <button
+							v-if="getTimeValue(field.id)"
+							type="button"
+							class="px-2.5 py-1 rounded-md bg-white border border-[#E2E8F0] text-xs font-black text-[#64748B] hover:bg-[#F8FAFC] transition-colors"
+							@click="clearTimeField(field.id)"
+						  >
+							清空
+						  </button>
+						</span>
+					  </span>
+
+					  <button
+						type="button"
+						:class="[
+						  'w-full px-4 py-3 rounded-lg border bg-white text-left text-sm font-bold text-[#1F2937] outline-none hover:border-[#58CC02] transition-colors flex items-center justify-between gap-3',
+						  field.id === 'until' && isTimeRangeInvalid ? 'border-[#BA1A1A]' : 'border-[#E2E8F0]',
+						  activeTimeField === field.id ? 'ring-2 ring-[#D7E5C8] border-[#58CC02]' : '',
+						]"
+						@click="openTimePicker(field.id)"
+					  >
+						<span>{{ formatDisplayDateTime(getTimeValue(field.id)) }}</span>
+						<span class="text-[#9CA3AF]">▾</span>
+					  </button>
+
+					  <div
+						v-if="activeTimeField === field.id"
+						:class="[
+						  'absolute z-30 top-[calc(100%+8px)] w-[520px] rounded-xl border border-[#E2E8F0] bg-white shadow-[0px_24px_70px_rgba(15,23,42,0.16)] p-4',
+						  field.id === 'until' ? 'right-0' : 'left-0',
+						]"
+					  >
+						<div class="flex items-center justify-between gap-3 mb-4">
+						  <div>
+							<p class="text-sm font-black text-[#1F2937]">{{ field.label }}</p>
+							<p class="text-xs font-bold text-[#9CA3AF] mt-0.5">{{ formatDisplayDateTime(getTimeValue(field.id)) }}</p>
+						  </div>
+						  <div class="flex items-center gap-2">
+							<button
+							  type="button"
+							  class="w-8 h-8 rounded-lg border border-[#E2E8F0] text-[#64748B] font-black hover:bg-[#F8FAFC]"
+							  @click="shiftCalendarView(-1)"
+							>
+							  ‹
+							</button>
+							<span
+							  v-if="calendarPanel !== 'date'"
+							  class="min-w-28 text-center text-sm font-black text-[#1F2937]"
+							>
+							  {{ calendarNavTitle }}
+							</span>
+							<span v-else class="min-w-28 flex items-center justify-center gap-1">
+							  <button
+								type="button"
+								class="px-2 py-1 rounded-md text-sm font-black text-[#1F2937] hover:bg-[#F8FAFC]"
+								@click="calendarPanel = 'year'"
+							  >
+								{{ calendarMonth.getFullYear() }}年
+							  </button>
+							  <button
+								type="button"
+								class="px-2 py-1 rounded-md text-sm font-black text-[#1F2937] hover:bg-[#F8FAFC]"
+								@click="calendarPanel = 'month'"
+							  >
+								{{ calendarMonth.getMonth() + 1 }}月
+							  </button>
+							</span>
+							<button
+							  type="button"
+							  class="w-8 h-8 rounded-lg border border-[#E2E8F0] text-[#64748B] font-black hover:bg-[#F8FAFC]"
+							  @click="shiftCalendarView(1)"
+							>
+							  ›
+							</button>
+						  </div>
+						</div>
+
+						<div
+						  :class="[
+							calendarPanel === 'date'
+							  ? 'grid grid-cols-[minmax(0,1fr)_160px] gap-4'
+							  : 'block',
+						  ]"
+						>
+						  <div>
+							<div v-if="calendarPanel === 'year'" class="grid grid-cols-3 gap-2">
+							  <button
+								v-for="year in yearOptions"
+								:key="year"
+								type="button"
+								:class="[
+								  'h-12 rounded-lg text-sm font-black transition-colors',
+								  year === calendarMonth.getFullYear()
+									? 'bg-[#356B00] text-white'
+									: 'text-[#1F2937] hover:bg-[#F8FAFC]',
+								]"
+								@click="selectCalendarYear(year)"
+							  >
+								{{ year }}
+							  </button>
+							</div>
+
+							<div v-else-if="calendarPanel === 'month'" class="grid grid-cols-3 gap-2">
+							  <button
+								v-for="(month, index) in monthOptions"
+								:key="month"
+								type="button"
+								:class="[
+								  'h-12 rounded-lg text-sm font-black transition-colors',
+								  index === calendarMonth.getMonth()
+									? 'bg-[#356B00] text-white'
+									: 'text-[#1F2937] hover:bg-[#F8FAFC]',
+								]"
+								@click="selectCalendarMonth(index)"
+							  >
+								{{ month }}
+							  </button>
+							</div>
+
+							<template v-else>
+							  <div class="grid grid-cols-7 gap-1 mb-2">
+								<span
+								  v-for="day in weekDays"
+								  :key="day"
+								  class="h-7 flex items-center justify-center text-xs font-black text-[#94A3B8]"
+								>
+								  {{ day }}
+								</span>
+							  </div>
+							  <div class="grid grid-cols-7 gap-1">
+								<button
+								  v-for="day in calendarDays"
+								  :key="day.key"
+								  type="button"
+								  :class="[
+									'h-9 rounded-lg text-sm font-bold transition-colors',
+									day.isSelected
+									  ? 'bg-[#356B00] text-white'
+									  : day.inRange
+										? 'bg-[#E6F4D8] text-[#356B00]'
+										: day.isToday
+										  ? 'bg-[#F2F5E8] text-[#356B00]'
+										  : day.inMonth
+											? 'text-[#1F2937] hover:bg-[#F8FAFC]'
+											: 'text-[#CBD5E1] hover:bg-[#F8FAFC]',
+								  ]"
+								  @click="selectCalendarDate(day.date)"
+								>
+								  {{ day.day }}
+								</button>
+							  </div>
+							</template>
+						  </div>
+
+						  <div v-if="calendarPanel === 'date'" class="grid grid-cols-2 gap-2">
+							<div class="flex flex-col gap-2">
+							  <span class="text-xs font-black text-[#94A3B8] text-center">时</span>
+							  <div class="max-h-64 overflow-y-auto rounded-lg bg-[#F8FAFC] p-1">
+								<button
+								  v-for="hour in hourOptions"
+								  :key="hour"
+								  type="button"
+								  :class="[
+									'w-full h-8 rounded-md text-xs font-black transition-colors',
+									activeDateTime?.getHours() === hour
+									  ? 'bg-[#356B00] text-white'
+									  : 'text-[#475569] hover:bg-white',
+								  ]"
+								  @click="setTimePart('hour', hour)"
+								>
+								  {{ String(hour).padStart(2, '0') }}
+								</button>
+							  </div>
+							</div>
+
+							<div class="flex flex-col gap-2">
+							  <span class="text-xs font-black text-[#94A3B8] text-center">分</span>
+							  <div class="max-h-64 overflow-y-auto rounded-lg bg-[#F8FAFC] p-1">
+								<button
+								  v-for="minute in minuteOptions"
+								  :key="minute"
+								  type="button"
+								  :class="[
+									'w-full h-8 rounded-md text-xs font-black transition-colors',
+									activeDateTime?.getMinutes() === minute
+									  ? 'bg-[#356B00] text-white'
+									  : 'text-[#475569] hover:bg-white',
+								  ]"
+								  @click="setTimePart('minute', minute)"
+								>
+								  {{ String(minute).padStart(2, '0') }}
+								</button>
+							  </div>
+							</div>
+						  </div>
+						</div>
+
+						<div class="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-[#F1F5F9]">
+						  <div class="flex items-center gap-1">
+							<button
+							  type="button"
+							  class="px-3 py-2 rounded-lg text-xs font-black text-[#356B00] hover:bg-[#F2F5E8]"
+							  @click="useTodayForActiveField"
+							>
+							  今天
+							</button>
+							<button
+							  v-if="activeTimeField && getTimeValue(activeTimeField)"
+							  type="button"
+							  class="px-3 py-2 rounded-lg text-xs font-black text-[#64748B] hover:bg-[#F8FAFC]"
+							  @click="clearTimeField(activeTimeField)"
+							>
+							  清空
+							</button>
+						  </div>
+						  <button
+							type="button"
+							class="px-4 py-2 rounded-lg bg-[#356B00] text-xs font-black text-white hover:bg-[#2E5E00]"
+							@click="activeTimeField = null"
+						  >
+							确定
+						  </button>
+						</div>
+					  </div>
+					</div>
+				  </div>
+				</div>
+				<div class="flex items-center gap-3">
+				  <span class="text-xs font-bold text-[#9CA3AF]">最大提交次数</span>
+				  <input
+					:value="maxSubmissions ?? ''"
+					type="number"
+					min="1"
+					max="99"
+					placeholder="不限"
+					class="w-20 px-3 py-3 rounded-lg border border-[#E2E8F0] text-sm text-center font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
+					@input="maxSubmissionsInput"
+				  />
+				  <span class="text-xs font-bold text-[#9CA3AF]">留空表示不限次数</span>
+				</div>
+			  </div>
+			</div>
+		</div>
+		
+		<div
+		  v-if="currentPage == 2"
+		  class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6"
+		>
+			<div class="px-6 pt-6 pb-4 border-b border-[#F1F5F9] flex flex-col gap-1">
+			  <h3 class="text-base font-black text-[#1F2937]">确认{{ modeText.segmentTitle }}</h3>
+			  <p class="text-xs font-bold text-[#9CA3AF]">请核对自动切分结果，可直接修改、删除或补充后再发布</p>
+			</div>
+			<div class="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-2">
+			  <div v-for="(_segment, idx) in segmentDraft" :key="idx" style="position: relative">
+				<div
+				  class="flex items-center gap-2 rounded-lg transition-colors"
+				>
+				  <span class="text-xs font-black text-[#9CA3AF] w-8 shrink-0 pl-1">#{{ idx + 1 }}</span>
+				  <input
+				    ref="segmentDraftref"
+					v-model="segmentDraft[idx]"
+					type="text"
+					class="flex-1 px-3 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none hover:border-[#58CC02]"
+					:class="selectedSegmentIndex === idx ? 'bg-[#F2F8E8] ring-2 ring-[#58CC02]' : ''"
+				    @click="selectedSegmentIndex = idx"
+					@blur="onInputBlur(idx)"
+				  />
+				  <button
+					type="button"
+					class="w-9 h-9 shrink-0 rounded-lg border border-[#E2E8F0] text-[#BA1A1A] font-black hover:bg-[#FEF2F2] transition-colors"
+					@click.stop="removeSegmentDraft(idx)"
+				  >
+					×
+				  </button>
+				</div>
+				<button
+				  v-if="idx < segmentDraft.length - 1 && selectedSegmentIndex == idx"
+				  class="self-start ml-3.5 px-1.5 py-1 rounded-lg border border-dashed border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
+				  style="position: absolute; z-index: 10; top: 80%"
+				  @click="insertSegmentDraftBelow(idx)"
+				>
+				  +
+				</button>
+			  </div>
+			  <button
+				type="button"
+				class="mt-1 self-start px-3 py-2 rounded-lg border border-dashed border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
+				@click="addSegmentDraft"
+			  >
+				＋ 添加一条
+			  </button>
+			</div>
+			<div class="px-6 py-4 border-t border-[#F1F5F9] flex items-center justify-between gap-3">
+			  <span class="text-xs font-bold text-[#9CA3AF]">共 {{ segmentDraft.length }} 个{{ modeText.unit }}</span>
+			</div>
+		</div>
+		<div class="flex justify-end gap-2">
+		  <button
+				  v-if="currentPage > 1"
+				  type="button"
+				  class="px-4 py-2 rounded-lg bg-white border border-[#E2E8F0] text-xs font-black text-[#64748B] hover:border-[#58CC02] transition-colors"
+				  @click="prevPage"
+				>
+				上一页
+		  </button>
+		  <button
+				  v-if="currentPage == 0 && sourceTemplateId"
+				  type="button"
+				  class="px-4 py-2 rounded-lg bg-white border border-[#E2E8F0] text-xs font-black text-[#64748B] hover:border-[#58CC02] transition-colors"
+				  @click="editContent"
+				>
+				编辑该内容
+		  </button>
+		  <button
+				  v-if="(currentPage == 1 || currentPage == 2) && editing"
+				  type="button"
+				  class="px-4 py-2 rounded-lg bg-white border border-[#E2E8F0] text-xs font-black text-[#64748B] hover:border-[#58CC02] transition-colors"
+				  @click="exitEdit"
+				>
+				退出编辑
+		  </button>
+		  <button
+				  v-if="currentPage == 2 && templatePublic != 0"
+				  type="button"
+				  class="px-4 py-2 rounded-lg bg-white border border-[#E2E8F0] text-xs font-black text-[#64748B] hover:border-[#58CC02] transition-colors"
+				  @click="onSaveAsTemplate"
+				  :disabled="templateReq.loading.value"
+				>
+				{{ templateReq.loading.value ? '保存中...' : '仅保存为校本共建' }}
+		  </button>
+		  <button
+				  v-if="currentPage < 3"
+				  type="button"
+				  class="px-4 py-2 rounded-lg bg-[#356B00] text-xs font-black text-white hover:bg-[#2E5E00] transition-colors"
+				  @click="nextPage"
+				>
+				下一页
+		  </button>
+		  <button
+				  v-if="currentPage == 3"
+				  type="button"
+				  class="px-4 py-2 rounded-lg bg-[#356B00] text-xs font-black text-white hover:bg-[#2E5E00] transition-colors"
+				  @click="onPublish"
+				  :disabled="saveReq.loading.value"
+				>
+				{{ saveReq.loading.value ? '发布中...' : '保存并发布' }}
+		  </button>
+		</div>
       </div>
     </div>
-
-    <div class="w-[320px] shrink-0 flex flex-col gap-5">
-      <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-6">
-        <div class="flex items-center justify-between gap-3">
-          <span class="text-sm font-black text-[#1F2937]">班级信息</span>
-          <button
-            type="button"
-            class="px-3 py-1.5 rounded-lg border border-[#E2E8F0] bg-white text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] disabled:text-[#CBD5E1] disabled:hover:bg-white transition-colors"
-            :disabled="!hasClasses || classesReq.loading.value"
-            @click="toggleAllClasses"
-          >
-            {{ allClassesSelected ? '取消全选' : '全选班级' }}
-          </button>
-        </div>
-        <div v-if="classesReq.loading.value" class="text-xs font-bold text-[#9CA3AF]">班级加载中...</div>
-        <div v-else class="flex flex-col gap-2 max-h-52 overflow-y-auto pr-1">
-          <label
-            v-for="item in classes"
-            :key="item.class_id"
-            class="flex items-center gap-3 rounded-lg border border-[#E2E8F0] px-3 py-2 cursor-pointer hover:border-[#58CC02]"
-          >
-            <input
-              v-model="selectedClassIds"
-              type="checkbox"
-              :value="item.class_id"
-              class="accent-[#356B00]"
-            />
-            <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-black text-[#1F2937]">{{ item.class_name }}</span>
-              <span class="block text-xs font-bold text-[#9CA3AF]">{{ item.student_count }}名学生 · {{ item.task_count }}个任务</span>
-            </span>
-          </label>
-        </div>
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-full bg-[#F2F5E8] flex items-center justify-center">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#356B00" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
-          </div>
-          <div>
-            <p class="text-sm font-black text-[#1F2937]">已选 {{ selectedClassIds.length }} 个班级</p>
-            <p class="text-xs font-bold text-[#9CA3AF]">{{ selectedStudentCount }}名学生</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4">
-        <h3 class="text-sm font-black text-[#1F2937]">{{ modeText.overviewTitle }}</h3>
-        <div v-if="segmentedSentences.length === 0" class="text-center py-4">
-          <p class="text-xs font-bold text-[#9CA3AF]">{{ modeText.overviewEmpty }}</p>
-        </div>
-        <div v-else class="flex flex-col gap-4">
-          <div
-            v-for="(sentence, idx) in segmentedSentences"
-            :key="idx"
-            class="flex items-start gap-2"
-          >
-            <span class="text-xs font-black text-[#356B00] bg-[#F2F5E8] rounded-full w-5 h-5 flex items-center justify-center shrink-0">{{ idx + 1 }}</span>
-            <p class="text-xs text-[#64748B] leading-relaxed line-clamp-2">{{ sentence }}</p>
-          </div>
-        </div>
-        <div v-if="segmentedSentences.length > 0" class="bg-[rgba(53,107,0,0.05)] rounded-xl border border-[rgba(53,107,0,0.1)] p-4 text-xs font-bold text-[#356B00]">
-          {{ segmentedSentences.length }} 个{{ modeText.unit }} · {{ taskType === 'homework' ? '作业任务' : '练习任务' }}
-        </div>
-      </div>
-
-      <div class="bg-white rounded-xl border border-[#F1F5F9] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4">
-        <div class="flex flex-col gap-2">
-          <span class="text-xs font-black text-[#64748B]">练习标题（教师看到）</span>
-          <input
-            v-model="templateTitle"
-            type="text"
-            placeholder="练习标题，留空则用任务标题"
-            class="w-full px-4 py-3 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] placeholder-[#9CA3AF] outline-none focus:border-[#58CC02]"
-          />
-        </div>
-        <div class="flex flex-col gap-2">
-          <span class="text-xs font-black text-[#64748B]">校本练习可见范围</span>
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              :class="[
-                'px-3 py-2 rounded-lg border text-xs font-black transition-colors',
-                templatePublic
-                  ? 'bg-[#356B00] border-[#356B00] text-white'
-                  : 'bg-white border-[#E2E8F0] text-[#64748B] hover:border-[#58CC02]',
-              ]"
-              @click="templatePublic = true"
-            >
-              同校公开
-            </button>
-            <button
-              type="button"
-              :class="[
-                'px-3 py-2 rounded-lg border text-xs font-black transition-colors',
-                !templatePublic
-                  ? 'bg-[#356B00] border-[#356B00] text-white'
-                  : 'bg-white border-[#E2E8F0] text-[#64748B] hover:border-[#58CC02]',
-              ]"
-              @click="templatePublic = false"
-            >
-              仅自己可见
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <button
-        type="button"
-        class="w-full bg-white rounded-xl shadow-[0px_4px_20px_rgba(0,0,0,0.04)] py-4 text-center text-sm font-bold text-[#334155] hover:bg-[#F8FAFC] transition-colors disabled:text-[#CBD5E1] disabled:hover:bg-white"
-        @click="onSaveAsTemplate"
-        :disabled="templateReq.loading.value || !canSaveAsTemplate"
-      >
-        {{ templateReq.loading.value ? '保存中...' : '保存为校本练习' }}
-      </button>
-      <p v-if="!canSaveAsTemplate" class="text-xs font-bold text-[#9CA3AF] text-center -mt-2">
-        当前内容与该校本练习完全一致，无需重复保存
-      </p>
-
-      <button
-        type="button"
-        class="w-full bg-[#356B00] rounded-xl shadow-[0px_2px_4px_-2px_rgba(0,0,0,0.1),0px_4px_6px_-1px_rgba(0,0,0,0.1)] py-4 text-center text-sm font-bold text-white hover:bg-[#2E5E00] transition-colors"
-        @click="onPublish"
-        :disabled="saveReq.loading.value || classesReq.loading.value"
-      >
-        {{ saveReq.loading.value ? '发布中...' : '保存并发布' }}
-      </button>
-    </div>
-
-    <div
-      v-if="segmentEditorOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
-      @click.self="cancelSegmentDraft"
-    >
-      <div class="w-full max-w-2xl max-h-[80vh] rounded-2xl bg-white shadow-[0px_24px_70px_rgba(15,23,42,0.24)] flex flex-col">
-        <div class="px-6 pt-6 pb-4 border-b border-[#F1F5F9] flex flex-col gap-1">
-          <h3 class="text-base font-black text-[#1F2937]">确认{{ modeText.segmentTitle }}</h3>
-          <p class="text-xs font-bold text-[#9CA3AF]">请核对自动切分结果，可直接修改、删除或补充后再发布</p>
-        </div>
-        <div class="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-2">
-          <template v-for="(_segment, idx) in segmentDraft" :key="idx">
-            <div
-              class="flex items-center gap-2 rounded-lg transition-colors"
-              :class="selectedSegmentIndex === idx ? 'bg-[#F2F8E8] ring-2 ring-[#58CC02]' : ''"
-              @click="selectedSegmentIndex = idx"
-            >
-              <span class="text-xs font-black text-[#9CA3AF] w-8 shrink-0 pl-1">#{{ idx + 1 }}</span>
-              <input
-                v-model="segmentDraft[idx]"
-                type="text"
-                class="flex-1 px-3 py-2 rounded-lg border border-[#E2E8F0] text-sm font-bold text-[#1F2937] outline-none focus:border-[#58CC02]"
-              />
-              <button
-                type="button"
-                class="w-9 h-9 shrink-0 rounded-lg border border-[#E2E8F0] text-[#BA1A1A] font-black hover:bg-[#FEF2F2] transition-colors"
-                @click.stop="removeSegmentDraft(idx)"
-              >
-                ×
-              </button>
-            </div>
-            <button
-              v-if="selectedSegmentIndex === idx"
-              type="button"
-              class="self-start ml-8 px-3 py-1.5 rounded-lg border border-dashed border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
-              @click.stop="insertSegmentDraftBelow(idx)"
-            >
-              在下方添加行
-            </button>
-          </template>
-          <button
-            type="button"
-            class="mt-1 self-start px-3 py-2 rounded-lg border border-dashed border-[#D7E5C8] text-xs font-black text-[#356B00] hover:bg-[#F2F5E8] transition-colors"
-            @click="addSegmentDraft"
-          >
-            ＋ 添加一条
-          </button>
-        </div>
-        <div class="px-6 py-4 border-t border-[#F1F5F9] flex items-center justify-between gap-3">
-          <span class="text-xs font-bold text-[#9CA3AF]">共 {{ segmentDraft.length }} 个{{ modeText.unit }}</span>
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              class="px-4 py-2 rounded-lg border border-[#E2E8F0] text-xs font-black text-[#64748B] hover:bg-[#F8FAFC] transition-colors"
-              @click="cancelSegmentDraft"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              class="px-4 py-2 rounded-lg bg-[#356B00] text-xs font-black text-white hover:bg-[#2E5E00] transition-colors"
-              @click="confirmSegmentDraft"
-            >
-              确认并应用
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    
   </div>
 </template>

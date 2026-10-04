@@ -79,6 +79,7 @@ const statusClass = (status: string) => {
 const recordingLabel = () => {
   if (analyzing.value) return '评测中…'
   if (recording.value) return `${(recordingElapsedMs.value / 1000).toFixed(1)}s`
+  if (ttsPreparing.value) return '参考音频准备中…'
   return '开始录音'
 }
 
@@ -282,11 +283,11 @@ onUnmounted(() => {
           <button
             type="button"
             class="bg-[#70C125] text-white px-5 py-3 rounded-2xl font-black text-sm flex items-center gap-2 hover:bg-[#63ad20] border-b-4 border-[#5E9E1A] active:border-b-0 active:translate-y-1 transition-all shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
-            :disabled="ttsPreparing"
+            :disabled="recording || analyzing"
             @click="splitSentences"
           >
             <img src="../../assets/figma/icon-split.svg" class="w-5 h-5 invert brightness-0" alt="" />
-            {{ ttsPreparing ? '分句中…' : '智能分句' }}
+            智能分句
           </button>
         </div>
       </div>

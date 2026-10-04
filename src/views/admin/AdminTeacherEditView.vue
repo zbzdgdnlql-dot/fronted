@@ -26,9 +26,6 @@ const form = reactive({
 const inputClass =
   'w-full px-4 py-3 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFB] text-sm font-bold text-[#3C3C3C] placeholder:text-[#9CA3AF] focus:outline-none focus:ring-2 focus:ring-[#70C125]/30 focus:border-[#70C125] transition'
 
-const readonlyClass =
-  'w-full px-4 py-3 rounded-2xl border border-[#E2E8F0] bg-[#F1F5F9] text-sm font-bold text-[#9CA3AF] cursor-not-allowed'
-
 const goBack = () => router.push('/admin/teachers')
 
 const load = async () => {
@@ -45,6 +42,10 @@ const submit = async () => {
     toast.push('请输入教师姓名', 'warning')
     return
   }
+  if (!form.staff_id.trim()) {
+    toast.push('请输入教师工号', 'warning')
+    return
+  }
 
   submitting.value = true
   try {
@@ -55,8 +56,8 @@ const submit = async () => {
     })
     toast.push('教师信息已更新', 'success')
     goBack()
-  } catch {
-    toast.push('保存失败，请稍后重试', 'error')
+  } catch (error) {
+    toast.push(error instanceof Error ? error.message : '保存失败，请稍后重试', 'error')
   } finally {
     submitting.value = false
   }
@@ -73,7 +74,7 @@ onMounted(() => {
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div class="flex flex-col gap-2">
           <h2 class="text-2xl font-black text-gray-900 tracking-tight">编辑教师信息</h2>
-          <p class="text-sm font-bold text-gray-400">修改教师姓名或工号</p>
+          <p class="text-sm font-bold text-gray-400">修改教师姓名与工号</p>
         </div>
         <button
           type="button"
@@ -107,7 +108,7 @@ onMounted(() => {
             </div>
             <div>
               <label class="block mb-2 text-sm font-black text-gray-900">教师工号</label>
-              <input :value="form.staff_id" type="text" readonly :class="readonlyClass" />
+              <input v-model="form.staff_id" type="text" placeholder="请输入教师工号" :class="inputClass" />
             </div>
           </div>
 

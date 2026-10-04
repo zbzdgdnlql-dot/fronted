@@ -189,13 +189,6 @@ const tableHeaders = ['内容标题', '所属班级', '截止时间', '类型', 
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
             创建新内容
           </button>
-          <button
-            type="button"
-            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#356B00] text-white text-sm font-bold hover:bg-[#2E5E00] shadow-sm transition-colors"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>
-            导入
-          </button>
         </div>
       </div>
 

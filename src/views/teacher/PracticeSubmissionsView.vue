@@ -169,6 +169,18 @@ const formatDate = (value: string | null) => {
 
 const getRecordTime = (value: string | null) => (value ? new Date(value).getTime() : Number.MAX_SAFE_INTEGER)
 
+/** 倒序排序用：空值返回 0，保证无时间的项排在最后 */
+const getDescTime = (value: string | null) => (value ? new Date(value).getTime() : 0)
+
+/** 任务布置时间（列表接口只下发 available_from，取不到时视为最早） */
+const getTaskTime = (task: TeacherTaskItem) => getDescTime(task.available_from)
+
+/** 取一个学生最近一次提交时间，用于学生分组倒序 */
+const getLatestSessionTime = (sessions: SessionChoice[]) => sessions.reduce(
+  (max, session) => Math.max(max, getDescTime(session.completedAt)),
+  0,
+)
+
 const formatAudioTime = (seconds: number) => {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
   const minutes = Math.floor(seconds / 60)
@@ -469,20 +481,29 @@ const syncRouteSelection = () => {
 }
 
 const mapRecords = (rows: TeacherTaskRecordStudent[]) => {
-  sessionGroups.value = rows.map((student) => ({
-    userId: student.user_id,
-    studentName: student.username,
-    recordsCount: student.records_count,
-    sessions: [...student.records].sort((a, b) => getRecordTime(a.completed_at) - getRecordTime(b.completed_at)).map((record, index) => ({
+  sessionGroups.value = rows.map((student) => {
+    // 先按提交时间升序编号，保证「第 N 次提交」始终是提交先后；再倒序展示，最近提交在最上面
+    const sessions = [...student.records]
+      .sort((a, b) => getRecordTime(a.completed_at) - getRecordTime(b.completed_at))
+      .map((record, index) => ({
+        userId: student.user_id,
+        studentName: student.username,
+        attemptNo: index + 1,
+        displayName: `${student.username} · 第 ${index + 1} 次提交`,
+        sessionId: record.session_id,
+        score: record.average_score,
+        completedAt: record.completed_at,
+      }))
+      .reverse()
+    return {
       userId: student.user_id,
       studentName: student.username,
-      attemptNo: index + 1,
-      displayName: `${student.username} · 第 ${index + 1} 次提交`,
-      sessionId: record.session_id,
-      score: record.average_score,
-      completedAt: record.completed_at,
-    })),
-  }))
+      recordsCount: student.records_count,
+      sessions,
+    }
+  })
+    // 学生分组按最近提交时间倒序
+    .sort((a, b) => getLatestSessionTime(b.sessions) - getLatestSessionTime(a.sessions))
   if (!flatSessions.value.some((session) => session.sessionId === selectedSessionId.value)) {
     const first = flatSessions.value[0]
     selectedSessionId.value = first?.sessionId ?? ''
@@ -530,7 +551,9 @@ const loadRecords = async () => {
 }
 
 const load = async () => {
-  tasks.value = await tasksReq.run(() => getTeacherTasks())
+  const rows = await tasksReq.run(() => getTeacherTasks())
+  // 任务目录按布置时间倒序，最新发布的在最上面
+  tasks.value = [...rows].sort((a, b) => getTaskTime(b) - getTaskTime(a))
   syncRouteSelection()
   if (selectedTaskId.value && selectedClassId.value) await loadRecords()
   updateQuery()

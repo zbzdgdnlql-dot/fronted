@@ -176,6 +176,12 @@ const applySegments = (next: string[]) => {
   }
 }
 
+/** 把「确认分句」页的编辑结果回写到提交用数组，避免发布/保存时仍提交自动分句结果 */
+const commitSegmentDraft = () => {
+  if (!segmentDraft.value.length) return
+  segmentedSentences.value = segmentDraft.value.map((item) => item.trim())
+}
+
 const addSegmentDraft = () => {
   segmentDraft.value.push('')
   const index = segmentDraft.value.length - 1
@@ -459,6 +465,8 @@ const doPublish = async () => {
   }
   // 从模板进入且内容未改：复用原模板，避免每次布置都新建一个一模一样的模板
   const reuseTemplateId = sourceTemplateId.value && isTemplateUnchanged.value ? sourceTemplateId.value : null
+  // 以确认页的最终分句为准提交
+  commitSegmentDraft()
 
   try {
     await saveReq.run(() => publishTeacherTask({
@@ -501,6 +509,8 @@ const doSaveTemplate = async () => {
     toast.push('该内容与原内容相同，无法保存', 'warning');
     return;
   }
+  // 以确认页的最终分句为准保存
+  commitSegmentDraft()
   try {
     await templateReq.run(() => saveTeacherTemplate({
       title: templateName,
@@ -584,7 +594,7 @@ const nextPage = () => {
       toast.push('请选择可见范围', 'warning');
       return;
     }
-    if (contentText.value.trim() !== segmentedText.value || segmentedSentences.value.join('\n') !== segmentDraft.value.join('\n')) {
+    if (contentText.value.trim() !== segmentedText.value) {
       onSegment();
     }
   }
@@ -604,6 +614,9 @@ const nextPage = () => {
       toast.push('该内容与原内容相同，系统将忽略本次编辑', 'warning')
       editing.value = false;
     }
+    // 校验通过后，以确认页中的最终分句作为后续提交结果
+    commitSegmentDraft()
+    segmentsConfirmed.value = true
   }
   currentPage.value += 1;
 }
